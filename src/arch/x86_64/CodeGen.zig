@@ -35,9 +35,9 @@ const caller_preserved_regs = abi.caller_preserved_regs;
 const allocatable_registers = abi.allocatable_registers;
 const c_abi_int_param_regs = abi.c_abi_int_param_regs;
 const c_abi_int_return_regs = abi.c_abi_int_return_regs;
-const RegisterManager = RegisterManagerFn(Self, Register, &allocatable_registers, spillInstruction);
-const RegisterLock = RegisterManager.RegisterLock;
-const Register = bits.Register;
+const RegisterManager = RegisterManagerFn(Self, GpRegister, &allocatable_registers, spillInstruction);
+const GpRegisterLock = RegisterManager.RegisterLock;
+const GpRegister = bits.Register;
 
 const AvxRegisterManager = RegisterManagerFn(Self, AvxRegister, &abi.avx_regs, spillInstructionAvx);
 const AvxRegisterLock = AvxRegisterManager.RegisterLock;
@@ -400,17 +400,15 @@ fn gen(self: *Self) InnerError!void {
     if (cc != .Naked) {
         _ = try self.addInst(.{
             .tag = .push,
-            .ops = (Mir.Ops(Register, Register){
-                .reg1 = .rbp,
-            }).encode(),
+            .ops = .{ .reg1 = @enumToInt(.rbp) },
             .data = undefined, // unused for push reg,
         });
         _ = try self.addInst(.{
             .tag = .mov,
-            .ops = (Mir.Ops(Register, Register){
-                .reg1 = .rbp,
-                .reg2 = .rsp,
-            }).encode(),
+            .ops = .{
+                .reg1 = @enumToInt(.rbp),
+                .reg2 = @enumToInt(.rsp),
+            },
             .data = undefined,
         });
         // We want to subtract the aligned stack frame size from rsp here, but we don't
@@ -447,9 +445,7 @@ fn gen(self: *Self) InnerError!void {
         // push the callee_preserved_regs that were used
         const backpatch_push_callee_preserved_regs_i = try self.addInst(.{
             .tag = .push_regs_from_callee_preserved_regs,
-            .ops = (Mir.Ops(Register, Register){
-                .reg1 = .rbp,
-            }).encode(),
+            .ops = .{ .reg1 = @enumToInt(.rbp) },
             .data = .{ .payload = undefined }, // to be backpatched
         });
 
@@ -489,9 +485,7 @@ fn gen(self: *Self) InnerError!void {
         // pop the callee_preserved_regs
         _ = try self.addInst(.{
             .tag = .pop_regs_from_callee_preserved_regs,
-            .ops = (Mir.Ops(Register, Register){
-                .reg1 = .rbp,
-            }).encode(),
+            .ops = .{ .reg1 = @enumToInt(.rbp) },
             .data = .{ .payload = callee_preserved_regs_payload },
         });
 
@@ -510,17 +504,13 @@ fn gen(self: *Self) InnerError!void {
 
         _ = try self.addInst(.{
             .tag = .pop,
-            .ops = (Mir.Ops(Register, Register){
-                .reg1 = .rbp,
-            }).encode(),
+            .ops = .{ .reg1 = @enumToInt(.rbp) },
             .data = undefined,
         });
 
         _ = try self.addInst(.{
             .tag = .ret,
-            .ops = (Mir.Ops(Register, Register){
-                .flags = 0b11,
-            }).encode(),
+            .ops = .{ .flags = 0b11 },
             .data = undefined,
         });
 
@@ -534,16 +524,12 @@ fn gen(self: *Self) InnerError!void {
         if (aligned_stack_end > 0) {
             self.mir_instructions.set(backpatch_stack_sub, .{
                 .tag = .sub,
-                .ops = (Mir.Ops(Register, Register){
-                    .reg1 = .rsp,
-                }).encode(),
+                .ops = .{ .reg1 = @enumToInt(.rsp) },
                 .data = .{ .imm = aligned_stack_end },
             });
             self.mir_instructions.set(backpatch_stack_add, .{
                 .tag = .add,
-                .ops = (Mir.Ops(Register, Register){
-                    .reg1 = .rsp,
-                }).encode(),
+                .ops = .{ .reg1 = @enumToInt(.rsp) },
                 .data = .{ .imm = aligned_stack_end },
             });
         }
@@ -1061,7 +1047,7 @@ fn airIntCast(self: *Self, inst: Air.Inst.Index) !void {
             return self.fail("TODO implement intCast for abi sizes larger than 8", .{});
         }
 
-        const operand_lock: ?RegisterLock = switch (operand) {
+        const operand_lock: ?GpRegisterLock = switch (operand) {
             .register => |reg| self.register_manager.lockRegAssumeUnused(reg),
             else => null,
         };
@@ -1092,7 +1078,7 @@ fn airTrunc(self: *Self, inst: Air.Inst.Index) !void {
         return self.fail("TODO implement trunc for abi sizes larger than 8", .{});
     }
 
-    const operand_lock: ?RegisterLock = switch (operand) {
+    const operand_lock: ?GpRegisterLock = switch (operand) {
         .register => |reg| self.register_manager.lockRegAssumeUnused(reg),
         else => null,
     };
@@ -1168,7 +1154,7 @@ fn airNot(self: *Self, inst: Air.Inst.Index) !void {
             else => {},
         }
 
-        const operand_lock: ?RegisterLock = switch (operand) {
+        const operand_lock: ?GpRegisterLock = switch (operand) {
             .register => |reg| self.register_manager.lockRegAssumeUnused(reg),
             else => null,
         };
@@ -1180,7 +1166,7 @@ fn airNot(self: *Self, inst: Air.Inst.Index) !void {
             }
             break :blk try self.copyToRegisterWithInstTracking(inst, operand_ty, operand);
         };
-        const dst_mcv_lock: ?RegisterLock = switch (dst_mcv) {
+        const dst_mcv_lock: ?GpRegisterLock = switch (dst_mcv) {
             .register => |reg| self.register_manager.lockReg(reg),
             else => null,
         };
@@ -1209,7 +1195,7 @@ fn airMin(self: *Self, inst: Air.Inst.Index) !void {
         // TODO improve by checking if any operand can be reused.
         // TODO audit register allocation
         const lhs = try self.resolveInst(bin_op.lhs);
-        const lhs_lock: ?RegisterLock = switch (lhs) {
+        const lhs_lock: ?GpRegisterLock = switch (lhs) {
             .register => |reg| self.register_manager.lockRegAssumeUnused(reg),
             else => null,
         };
@@ -1220,7 +1206,7 @@ fn airMin(self: *Self, inst: Air.Inst.Index) !void {
         defer self.register_manager.unlockReg(lhs_reg_lock);
 
         const rhs_mcv = try self.limitImmediateType(bin_op.rhs, i32);
-        const rhs_lock: ?RegisterLock = switch (rhs_mcv) {
+        const rhs_lock: ?GpRegisterLock = switch (rhs_mcv) {
             .register => |reg| self.register_manager.lockRegAssumeUnused(reg),
             else => null,
         };
@@ -1231,10 +1217,10 @@ fn airMin(self: *Self, inst: Air.Inst.Index) !void {
         const dst_mcv = try self.copyToRegisterWithInstTracking(inst, ty, rhs_mcv);
         _ = try self.addInst(.{
             .tag = if (signedness == .signed) .cond_mov_lt else .cond_mov_below,
-            .ops = (Mir.Ops(Register, Register){
-                .reg1 = dst_mcv.register,
-                .reg2 = lhs_reg,
-            }).encode(),
+            .ops = .{
+                .reg1 = @enumToInt(dst_mcv.register),
+                .reg2 = @enumToInt(lhs_reg),
+            },
             .data = undefined,
         });
 
@@ -1431,10 +1417,10 @@ fn genSetStackTruncatedOverflowCompare(
     };
     _ = try self.addInst(.{
         .tag = .cond_set_byte_overflow,
-        .ops = (Mir.Ops(Register, Register){
-            .reg1 = overflow_reg.to8(),
+        .ops = .{
+            .reg1 = @enumToInt(overflow_reg.to8()),
             .flags = flags,
-        }).encode(),
+        },
         .data = undefined,
     });
 
@@ -1451,10 +1437,10 @@ fn genSetStackTruncatedOverflowCompare(
     const eq_reg = temp_regs[2];
     _ = try self.addInst(.{
         .tag = .cond_set_byte_eq_ne,
-        .ops = (Mir.Ops(Register, Register){
-            .reg1 = eq_reg.to8(),
+        .ops = .{
+            .reg1 = @enumToInt(eq_reg.to8()),
             .flags = 0b00,
-        }).encode(),
+        },
         .data = undefined,
     });
 
@@ -1516,7 +1502,7 @@ fn airMulWithOverflow(self: *Self, inst: Air.Inst.Index) !void {
                             const lhs = try self.resolveInst(bin_op.lhs);
                             const rhs = try self.resolveInst(bin_op.rhs);
 
-                            const rhs_lock: ?RegisterLock = switch (rhs) {
+                            const rhs_lock: ?GpRegisterLock = switch (rhs) {
                                 .register => |reg| self.register_manager.lockRegAssumeUnused(reg),
                                 else => null,
                             };
@@ -1533,7 +1519,7 @@ fn airMulWithOverflow(self: *Self, inst: Air.Inst.Index) !void {
                                 if (rhs.isRegister() or rhs.isMemory()) break :blk rhs;
                                 break :blk MCValue{ .register = try self.copyToTmpRegister(ty, rhs) };
                             };
-                            const rhs_mcv_lock: ?RegisterLock = switch (rhs_mcv) {
+                            const rhs_mcv_lock: ?GpRegisterLock = switch (rhs_mcv) {
                                 .register => |reg| self.register_manager.lockReg(reg),
                                 else => null,
                             };
@@ -1600,19 +1586,17 @@ fn genIntMulDivOpMir(
         .signed => {
             _ = try self.addInst(.{
                 .tag = .cwd,
-                .ops = (Mir.Ops(Register, Register){
-                    .flags = 0b11,
-                }).encode(),
+                .ops = .{ .flags = 0b11 },
                 .data = undefined,
             });
         },
         .unsigned => {
             _ = try self.addInst(.{
                 .tag = .xor,
-                .ops = (Mir.Ops(Register, Register){
-                    .reg1 = .rdx,
-                    .reg2 = .rdx,
-                }).encode(),
+                .ops = .{
+                    .reg1 = @enumToInt(.rdx),
+                    .reg2 = @enumToInt(.rdx),
+                },
                 .data = undefined,
             });
         },
@@ -1631,17 +1615,15 @@ fn genIntMulDivOpMir(
         .register => |reg| {
             _ = try self.addInst(.{
                 .tag = tag,
-                .ops = (Mir.Ops(Register, Register){
-                    .reg1 = reg,
-                }).encode(),
+                .ops = .{ .reg1 = @enumToInt(reg) },
                 .data = undefined,
             });
         },
         .stack_offset => |off| {
             _ = try self.addInst(.{
                 .tag = tag,
-                .ops = (Mir.Ops(Register, Register){
-                    .reg2 = .rbp,
+                .ops = .{
+                    .reg2 = @enumToInt(.rbp),
                     .flags = switch (abi_size) {
                         1 => 0b00,
                         2 => 0b01,
@@ -1649,7 +1631,7 @@ fn genIntMulDivOpMir(
                         8 => 0b11,
                         else => unreachable,
                     },
-                }).encode(),
+                },
                 .data = .{ .imm = @bitCast(u32, -off) },
             });
         },
@@ -1682,34 +1664,34 @@ fn genInlineIntDivFloor(self: *Self, ty: Type, lhs: MCValue, rhs: MCValue) !MCVa
 
     _ = try self.addInst(.{
         .tag = .xor,
-        .ops = (Mir.Ops(Register, Register){
-            .reg1 = divisor.to64(),
-            .reg2 = dividend.to64(),
-        }).encode(),
+        .ops = .{
+            .reg1 = @enumToInt(divisor.to64()),
+            .reg2 = @enumToInt(dividend.to64()),
+        },
         .data = undefined,
     });
     _ = try self.addInst(.{
         .tag = .sar,
-        .ops = (Mir.Ops(Register, Register){
-            .reg1 = divisor.to64(),
+        .ops = .{
+            .reg1 = @enumToInt(divisor.to64()),
             .flags = 0b10,
-        }).encode(),
+        },
         .data = .{ .imm = 63 },
     });
     _ = try self.addInst(.{
         .tag = .@"test",
-        .ops = (Mir.Ops(Register, Register){
-            .reg1 = .rdx,
-            .reg2 = .rdx,
-        }).encode(),
+        .ops = .{
+            .reg1 = @enumToInt(.rdx),
+            .reg2 = @enumToInt(.rdx),
+        },
         .data = undefined,
     });
     _ = try self.addInst(.{
         .tag = .cond_mov_eq,
-        .ops = (Mir.Ops(Register, Register){
-            .reg1 = divisor.to64(),
-            .reg2 = .rdx,
-        }).encode(),
+        .ops = .{
+            .reg1 = @enumToInt(divisor.to64()),
+            .reg2 = @enumToInt(.rdx),
+        },
         .data = undefined,
     });
     try self.genBinOpMir(.add, Type.isize, .{ .register = divisor }, .{ .register = .rax });
@@ -1808,7 +1790,7 @@ fn airUnwrapErrErr(self: *Self, inst: Air.Inst.Index) !void {
     const err_ty = err_union_ty.errorUnionSet();
     const payload_ty = err_union_ty.errorUnionPayload();
     const operand = try self.resolveInst(ty_op.operand);
-    const operand_lock: ?RegisterLock = switch (operand) {
+    const operand_lock: ?GpRegisterLock = switch (operand) {
         .register => |reg| self.register_manager.lockRegAssumeUnused(reg),
         else => null,
     };
@@ -1841,7 +1823,7 @@ fn airUnwrapErrPayload(self: *Self, inst: Air.Inst.Index) !void {
         if (!payload_ty.hasRuntimeBits()) break :result MCValue.none;
 
         const operand = try self.resolveInst(ty_op.operand);
-        const operand_lock: ?RegisterLock = switch (operand) {
+        const operand_lock: ?GpRegisterLock = switch (operand) {
             .register => |reg| self.register_manager.lockRegAssumeUnused(reg),
             else => null,
         };
@@ -1913,7 +1895,7 @@ fn airWrapOptional(self: *Self, inst: Air.Inst.Index) !void {
 
         const optional_ty = self.air.typeOfIndex(inst);
         const operand = try self.resolveInst(ty_op.operand);
-        const operand_lock: ?RegisterLock = switch (operand) {
+        const operand_lock: ?GpRegisterLock = switch (operand) {
             .register => |reg| self.register_manager.lockRegAssumeUnused(reg),
             else => null,
         };
@@ -2050,7 +2032,7 @@ fn elemOffset(self: *Self, index_ty: Type, index: MCValue, elem_size: u64) !Regi
 fn genSliceElemPtr(self: *Self, lhs: Air.Inst.Ref, rhs: Air.Inst.Ref) !MCValue {
     const slice_ty = self.air.typeOf(lhs);
     const slice_mcv = try self.resolveInst(lhs);
-    const slice_mcv_lock: ?RegisterLock = switch (slice_mcv) {
+    const slice_mcv_lock: ?GpRegisterLock = switch (slice_mcv) {
         .register => |reg| self.register_manager.lockRegAssumeUnused(reg),
         else => null,
     };
@@ -2063,7 +2045,7 @@ fn genSliceElemPtr(self: *Self, lhs: Air.Inst.Ref, rhs: Air.Inst.Ref) !MCValue {
 
     const index_ty = self.air.typeOf(rhs);
     const index_mcv = try self.resolveInst(rhs);
-    const index_mcv_lock: ?RegisterLock = switch (index_mcv) {
+    const index_mcv_lock: ?GpRegisterLock = switch (index_mcv) {
         .register => |reg| self.register_manager.lockRegAssumeUnused(reg),
         else => null,
     };
@@ -2079,11 +2061,11 @@ fn genSliceElemPtr(self: *Self, lhs: Air.Inst.Ref, rhs: Air.Inst.Ref) !MCValue {
             // mov reg, [rbp - 8]
             _ = try self.addInst(.{
                 .tag = .mov,
-                .ops = (Mir.Ops(Register, Register){
-                    .reg1 = addr_reg.to64(),
-                    .reg2 = .rbp,
+                .ops = .{
+                    .reg1 = @enumToInt(addr_reg.to64()),
+                    .reg2 = @enumToInt(.rbp),
                     .flags = 0b01,
-                }).encode(),
+                },
                 .data = .{ .imm = @bitCast(u32, -@intCast(i32, off)) },
             });
         },
@@ -2131,7 +2113,7 @@ fn airArrayElemVal(self: *Self, inst: Air.Inst.Index) !void {
 
     const array_ty = self.air.typeOf(bin_op.lhs);
     const array = try self.resolveInst(bin_op.lhs);
-    const array_lock: ?RegisterLock = switch (array) {
+    const array_lock: ?GpRegisterLock = switch (array) {
         .register => |reg| self.register_manager.lockRegAssumeUnused(reg),
         else => null,
     };
@@ -2142,7 +2124,7 @@ fn airArrayElemVal(self: *Self, inst: Air.Inst.Index) !void {
 
     const index_ty = self.air.typeOf(bin_op.rhs);
     const index = try self.resolveInst(bin_op.rhs);
-    const index_lock: ?RegisterLock = switch (index) {
+    const index_lock: ?GpRegisterLock = switch (index) {
         .register => |reg| self.register_manager.lockRegAssumeUnused(reg),
         else => null,
     };
@@ -2164,10 +2146,10 @@ fn airArrayElemVal(self: *Self, inst: Air.Inst.Index) !void {
             // lea reg, [rbp]
             _ = try self.addInst(.{
                 .tag = .lea,
-                .ops = (Mir.Ops(Register, Register){
-                    .reg1 = addr_reg.to64(),
-                    .reg2 = .rbp,
-                }).encode(),
+                .ops = .{
+                    .reg1 = @enumToInt(addr_reg.to64()),
+                    .reg2 = @enumToInt(.rbp),
+                },
                 .data = .{ .imm = @bitCast(u32, -off) },
             });
         },
@@ -2175,10 +2157,10 @@ fn airArrayElemVal(self: *Self, inst: Air.Inst.Index) !void {
             // lea reg, [rbp]
             _ = try self.addInst(.{
                 .tag = .lea,
-                .ops = (Mir.Ops(Register, Register){
-                    .reg1 = addr_reg.to64(),
-                    .reg2 = .rbp,
-                }).encode(),
+                .ops = .{
+                    .reg1 = @enumToInt(addr_reg.to64()),
+                    .reg2 = @enumToInt(.rbp),
+                },
                 .data = .{ .imm = @bitCast(u32, -off) },
             });
         },
@@ -2213,7 +2195,7 @@ fn airPtrElemVal(self: *Self, inst: Air.Inst.Index) !void {
 
     const ptr_ty = self.air.typeOf(bin_op.lhs);
     const ptr = try self.resolveInst(bin_op.lhs);
-    const ptr_lock: ?RegisterLock = switch (ptr) {
+    const ptr_lock: ?GpRegisterLock = switch (ptr) {
         .register => |reg| self.register_manager.lockRegAssumeUnused(reg),
         else => null,
     };
@@ -2223,7 +2205,7 @@ fn airPtrElemVal(self: *Self, inst: Air.Inst.Index) !void {
     const elem_abi_size = elem_ty.abiSize(self.target.*);
     const index_ty = self.air.typeOf(bin_op.rhs);
     const index = try self.resolveInst(bin_op.rhs);
-    const index_lock: ?RegisterLock = switch (index) {
+    const index_lock: ?GpRegisterLock = switch (index) {
         .register => |reg| self.register_manager.lockRegAssumeUnused(reg),
         else => null,
     };
@@ -2243,11 +2225,11 @@ fn airPtrElemVal(self: *Self, inst: Air.Inst.Index) !void {
             // mov dst_mcv, [dst_mcv]
             _ = try self.addInst(.{
                 .tag = .mov,
-                .ops = (Mir.Ops(Register, Register){
+                .ops = .{
+                    .reg1 = @enumToInt(registerAlias(dst_mcv.register, @intCast(u32, elem_abi_size))),
+                    .reg2 = @enumToInt(dst_mcv.register),
                     .flags = 0b01,
-                    .reg1 = registerAlias(dst_mcv.register, @intCast(u32, elem_abi_size)),
-                    .reg2 = dst_mcv.register,
-                }).encode(),
+                },
                 .data = .{ .imm = 0 },
             });
             break :result .{ .register = registerAlias(dst_mcv.register, @intCast(u32, elem_abi_size)) };
@@ -2267,7 +2249,7 @@ fn airPtrElemPtr(self: *Self, inst: Air.Inst.Index) !void {
 
     const ptr_ty = self.air.typeOf(extra.lhs);
     const ptr = try self.resolveInst(extra.lhs);
-    const ptr_lock: ?RegisterLock = switch (ptr) {
+    const ptr_lock: ?GpRegisterLock = switch (ptr) {
         .register => |reg| self.register_manager.lockRegAssumeUnused(reg),
         else => null,
     };
@@ -2277,7 +2259,7 @@ fn airPtrElemPtr(self: *Self, inst: Air.Inst.Index) !void {
     const elem_abi_size = elem_ty.abiSize(self.target.*);
     const index_ty = self.air.typeOf(extra.rhs);
     const index = try self.resolveInst(extra.rhs);
-    const index_lock: ?RegisterLock = switch (index) {
+    const index_lock: ?GpRegisterLock = switch (index) {
         .register => |reg| self.register_manager.lockRegAssumeUnused(reg),
         else => null,
     };
@@ -2305,14 +2287,14 @@ fn airSetUnionTag(self: *Self, inst: Air.Inst.Index) !void {
     }
 
     const ptr = try self.resolveInst(bin_op.lhs);
-    const ptr_lock: ?RegisterLock = switch (ptr) {
+    const ptr_lock: ?GpRegisterLock = switch (ptr) {
         .register => |reg| self.register_manager.lockRegAssumeUnused(reg),
         else => null,
     };
     defer if (ptr_lock) |lock| self.register_manager.unlockReg(lock);
 
     const tag = try self.resolveInst(bin_op.rhs);
-    const tag_lock: ?RegisterLock = switch (tag) {
+    const tag_lock: ?GpRegisterLock = switch (tag) {
         .register => |reg| self.register_manager.lockRegAssumeUnused(reg),
         else => null,
     };
@@ -2346,7 +2328,7 @@ fn airGetUnionTag(self: *Self, inst: Air.Inst.Index) !void {
 
     // TODO reusing the operand
     const operand = try self.resolveInst(ty_op.operand);
-    const operand_lock: ?RegisterLock = switch (operand) {
+    const operand_lock: ?GpRegisterLock = switch (operand) {
         .register => |reg| self.register_manager.lockRegAssumeUnused(reg),
         else => null,
     };
@@ -2509,11 +2491,11 @@ fn load(self: *Self, dst_mcv: MCValue, ptr: MCValue, ptr_ty: Type) InnerError!vo
                     // mov dst_reg, [reg]
                     _ = try self.addInst(.{
                         .tag = .mov,
-                        .ops = (Mir.Ops(Register, Register){
-                            .reg1 = registerAlias(dst_reg, @intCast(u32, abi_size)),
-                            .reg2 = reg,
+                        .ops = .{
+                            .reg1 = @enumToInt(registerAlias(dst_reg, @intCast(u32, abi_size))),
+                            .reg2 = @enumToInt(reg),
                             .flags = 0b01,
-                        }).encode(),
+                        },
                         .data = .{ .imm = 0 },
                     });
                 },
@@ -2583,10 +2565,10 @@ fn loadMemPtrIntoRegister(self: *Self, reg: Register, ptr_ty: Type, ptr: MCValue
             const fn_owner_decl = mod.declPtr(self.mod_fn.owner_decl);
             _ = try self.addInst(.{
                 .tag = .lea_pie,
-                .ops = (Mir.Ops(Register, Register){
-                    .reg1 = registerAlias(reg, abi_size),
+                .ops = .{
+                    .reg1 = @enumToInt(registerAlias(reg, abi_size)),
                     .flags = flags,
-                }).encode(),
+                },
                 .data = .{
                     .load_reloc = .{
                         .atom_index = fn_owner_decl.link.macho.local_sym_index,
@@ -2647,15 +2629,15 @@ fn store(self: *Self, ptr: MCValue, value: MCValue, ptr_ty: Type, value_ty: Type
                             });
                             _ = try self.addInst(.{
                                 .tag = .mov_mem_imm,
-                                .ops = (Mir.Ops(Register, Register){
-                                    .reg1 = reg.to64(),
+                                .ops = .{
+                                    .reg1 = @enumToInt(reg.to64()),
                                     .flags = switch (abi_size) {
                                         1 => 0b00,
                                         2 => 0b01,
                                         4 => 0b10,
                                         else => unreachable,
                                     },
-                                }).encode(),
+                                },
                                 .data = .{ .payload = payload },
                             });
                         },
@@ -2669,11 +2651,11 @@ fn store(self: *Self, ptr: MCValue, value: MCValue, ptr_ty: Type, value_ty: Type
                             const tmp_reg = try self.copyToTmpRegister(value_ty, value);
                             _ = try self.addInst(.{
                                 .tag = .mov,
-                                .ops = (Mir.Ops(Register, Register){
-                                    .reg1 = reg.to64(),
-                                    .reg2 = tmp_reg.to64(),
+                                .ops = .{
+                                    .reg1 = @enumToInt(reg.to64()),
+                                    .reg2 = @enumToInt(tmp_reg.to64()),
                                     .flags = 0b10,
-                                }).encode(),
+                                },
                                 .data = .{ .imm = 0 },
                             });
                         },
@@ -2685,11 +2667,11 @@ fn store(self: *Self, ptr: MCValue, value: MCValue, ptr_ty: Type, value_ty: Type
                 .register => |src_reg| {
                     _ = try self.addInst(.{
                         .tag = .mov,
-                        .ops = (Mir.Ops(Register, Register){
-                            .reg1 = reg.to64(),
-                            .reg2 = registerAlias(src_reg, @intCast(u32, abi_size)),
+                        .ops = .{
+                            .reg1 = @enumToInt(reg.to64()),
+                            .reg2 = @enumToInt(registerAlias(src_reg, @intCast(u32, abi_size))),
                             .flags = 0b10,
-                        }).encode(),
+                        },
                         .data = .{ .imm = 0 },
                     });
                 },
@@ -2720,7 +2702,7 @@ fn store(self: *Self, ptr: MCValue, value: MCValue, ptr_ty: Type, value_ty: Type
         .direct_load,
         .memory,
         => {
-            const value_lock: ?RegisterLock = switch (value) {
+            const value_lock: ?GpRegisterLock = switch (value) {
                 .register => |reg| self.register_manager.lockReg(reg),
                 else => null,
             };
@@ -2736,11 +2718,11 @@ fn store(self: *Self, ptr: MCValue, value: MCValue, ptr_ty: Type, value_ty: Type
             // mov reg, [reg]
             _ = try self.addInst(.{
                 .tag = .mov,
-                .ops = (Mir.Ops(Register, Register){
-                    .reg1 = addr_reg.to64(),
-                    .reg2 = addr_reg.to64(),
+                .ops = .{
+                    .reg1 = @enumToInt(addr_reg.to64()),
+                    .reg2 = @enumToInt(addr_reg.to64()),
                     .flags = 0b01,
-                }).encode(),
+                },
                 .data = .{ .imm = 0 },
             });
 
@@ -2775,21 +2757,21 @@ fn store(self: *Self, ptr: MCValue, value: MCValue, ptr_ty: Type, value_ty: Type
                     }
                     _ = try self.addInst(.{
                         .tag = .mov_mem_imm,
-                        .ops = (Mir.Ops(Register, Register){
-                            .reg1 = addr_reg.to64(),
+                        .ops = .{
+                            .reg1 = @enumToInt(addr_reg.to64()),
                             .flags = flags,
-                        }).encode(),
+                        },
                         .data = .{ .payload = payload },
                     });
                 },
                 .register => |reg| {
                     _ = try self.addInst(.{
                         .tag = .mov,
-                        .ops = (Mir.Ops(Register, Register){
-                            .reg1 = addr_reg.to64(),
-                            .reg2 = reg,
+                        .ops = .{
+                            .reg1 = @enumToInt(addr_reg.to64()),
+                            .reg2 = @enumToInt(reg),
                             .flags = 0b10,
-                        }).encode(),
+                        },
                         .data = .{ .imm = 0 },
                     });
                 },
@@ -2806,20 +2788,20 @@ fn store(self: *Self, ptr: MCValue, value: MCValue, ptr_ty: Type, value_ty: Type
 
                         _ = try self.addInst(.{
                             .tag = .mov,
-                            .ops = (Mir.Ops(Register, Register){
-                                .reg1 = tmp_reg,
-                                .reg2 = tmp_reg,
+                            .ops = .{
+                                .reg1 = @enumToInt(tmp_reg),
+                                .reg2 = @enumToInt(tmp_reg),
                                 .flags = 0b01,
-                            }).encode(),
+                            },
                             .data = .{ .imm = 0 },
                         });
                         _ = try self.addInst(.{
                             .tag = .mov,
-                            .ops = (Mir.Ops(Register, Register){
-                                .reg1 = addr_reg.to64(),
-                                .reg2 = tmp_reg,
+                            .ops = .{
+                                .reg1 = @enumToInt(addr_reg.to64()),
+                                .reg2 = @enumToInt(tmp_reg),
                                 .flags = 0b10,
-                            }).encode(),
+                            },
                             .data = .{ .imm = 0 },
                         });
                         return;
@@ -2833,11 +2815,11 @@ fn store(self: *Self, ptr: MCValue, value: MCValue, ptr_ty: Type, value_ty: Type
                         const tmp_reg = try self.copyToTmpRegister(value_ty, value);
                         _ = try self.addInst(.{
                             .tag = .mov,
-                            .ops = (Mir.Ops(Register, Register){
-                                .reg1 = addr_reg.to64(),
-                                .reg2 = tmp_reg,
+                            .ops = .{
+                                .reg1 = @enumToInt(addr_reg.to64()),
+                                .reg2 = @enumToInt(tmp_reg),
                                 .flags = 0b10,
-                            }).encode(),
+                            },
                             .data = .{ .imm = 0 },
                         });
                         return;
@@ -2968,7 +2950,7 @@ fn airStructFieldVal(self: *Self, inst: Air.Inst.Index) !void {
                         break :blk dst_mcv;
                     }
                 };
-                const dst_mcv_lock: ?RegisterLock = switch (dst_mcv) {
+                const dst_mcv_lock: ?GpRegisterLock = switch (dst_mcv) {
                     .register => |a_reg| self.register_manager.lockReg(a_reg),
                     else => null,
                 };
@@ -2994,10 +2976,10 @@ fn airStructFieldVal(self: *Self, inst: Air.Inst.Index) !void {
                 if (signedness == .signed and field_size < 8) {
                     _ = try self.addInst(.{
                         .tag = .mov_sign_extend,
-                        .ops = (Mir.Ops(Register, Register){
-                            .reg1 = dst_mcv.register,
-                            .reg2 = registerAlias(dst_mcv.register, field_size),
-                        }).encode(),
+                        .ops = .{
+                            .reg1 = @enumToInt(dst_mcv.register),
+                            .reg2 = @enumToInt(registerAlias(dst_mcv.register, field_size)),
+                        },
                         .data = undefined,
                     });
                 }
@@ -3025,10 +3007,10 @@ fn airStructFieldVal(self: *Self, inst: Air.Inst.Index) !void {
                         };
                         _ = try self.addInst(.{
                             .tag = .cond_set_byte_overflow,
-                            .ops = (Mir.Ops(Register, Register){
-                                .reg1 = dst_reg.to8(),
+                            .ops = .{
+                                .reg1 = @enumToInt(dst_reg.to8()),
                                 .flags = flags,
-                            }).encode(),
+                            },
                             .data = undefined,
                         });
                         break :result MCValue{ .register = dst_reg.to8() };
@@ -3069,10 +3051,10 @@ fn genShiftBinOpMir(self: *Self, tag: Mir.Inst.Tag, ty: Type, reg: Register, shi
                 1 => {
                     _ = try self.addInst(.{
                         .tag = tag,
-                        .ops = (Mir.Ops(Register, Register){
-                            .reg1 = registerAlias(reg, abi_size),
+                        .ops = .{
+                            .reg1 = @enumToInt(registerAlias(reg, abi_size)),
                             .flags = 0b00,
-                        }).encode(),
+                        },
                         .data = undefined,
                     });
                     return;
@@ -3080,10 +3062,10 @@ fn genShiftBinOpMir(self: *Self, tag: Mir.Inst.Tag, ty: Type, reg: Register, shi
                 else => {
                     _ = try self.addInst(.{
                         .tag = tag,
-                        .ops = (Mir.Ops(Register, Register){
-                            .reg1 = registerAlias(reg, abi_size),
+                        .ops = .{
+                            .reg1 = @enumToInt(registerAlias(reg, abi_size)),
                             .flags = 0b10,
-                        }).encode(),
+                        },
                         .data = .{ .imm = @intCast(u8, imm) },
                     });
                     return;
@@ -3101,10 +3083,10 @@ fn genShiftBinOpMir(self: *Self, tag: Mir.Inst.Tag, ty: Type, reg: Register, shi
 
     _ = try self.addInst(.{
         .tag = tag,
-        .ops = (Mir.Ops(Register, Register){
-            .reg1 = registerAlias(reg, abi_size),
+        .ops = .{
+            .reg1 = @enumToInt(registerAlias(reg, abi_size)),
             .flags = 0b01,
-        }).encode(),
+        },
         .data = undefined,
     });
 }
@@ -3130,13 +3112,13 @@ fn genShiftBinOp(
 
     assert(rhs_ty.abiSize(self.target.*) == 1);
 
-    const lhs_lock: ?RegisterLock = switch (lhs) {
+    const lhs_lock: ?GpRegisterLock = switch (lhs) {
         .register => |reg| self.register_manager.lockReg(reg),
         else => null,
     };
     defer if (lhs_lock) |lock| self.register_manager.unlockReg(lock);
 
-    const rhs_lock: ?RegisterLock = switch (rhs) {
+    const rhs_lock: ?GpRegisterLock = switch (rhs) {
         .register => |reg| self.register_manager.lockReg(reg),
         else => null,
     };
@@ -3294,7 +3276,7 @@ fn genMulDivBinOp(
             try self.register_manager.getReg(.rax, if (signedness == .unsigned) maybe_inst else null);
             try self.register_manager.getReg(.rdx, null);
 
-            const lhs_lock: ?RegisterLock = switch (lhs) {
+            const lhs_lock: ?GpRegisterLock = switch (lhs) {
                 .register => |reg| self.register_manager.lockRegAssumeUnused(reg),
                 else => null,
             };
@@ -3303,7 +3285,7 @@ fn genMulDivBinOp(
             const actual_rhs: MCValue = blk: {
                 switch (signedness) {
                     .signed => {
-                        const rhs_lock: ?RegisterLock = switch (rhs) {
+                        const rhs_lock: ?GpRegisterLock = switch (rhs) {
                             .register => |reg| self.register_manager.lockRegAssumeUnused(reg),
                             else => null,
                         };
@@ -3317,7 +3299,7 @@ fn genMulDivBinOp(
                     .unsigned => break :blk rhs,
                 }
             };
-            const rhs_lock: ?RegisterLock = switch (actual_rhs) {
+            const rhs_lock: ?GpRegisterLock = switch (actual_rhs) {
                 .register => |reg| self.register_manager.lockReg(reg),
                 else => null,
             };
@@ -3397,13 +3379,13 @@ fn genBinOp(
         else => false,
     };
 
-    const lhs_lock: ?RegisterLock = switch (lhs) {
+    const lhs_lock: ?GpRegisterLock = switch (lhs) {
         .register => |reg| self.register_manager.lockRegAssumeUnused(reg),
         else => null,
     };
     defer if (lhs_lock) |lock| self.register_manager.unlockReg(lock);
 
-    const rhs_lock: ?RegisterLock = switch (rhs) {
+    const rhs_lock: ?GpRegisterLock = switch (rhs) {
         .register => |reg| self.register_manager.lockRegAssumeUnused(reg),
         else => null,
     };
@@ -3424,7 +3406,7 @@ fn genBinOp(
         }
         break :blk MCValue{ .register = try self.copyToTmpRegister(lhs_ty, lhs) };
     };
-    const dst_mcv_lock: ?RegisterLock = switch (dst_mcv) {
+    const dst_mcv_lock: ?GpRegisterLock = switch (dst_mcv) {
         .register => |reg| self.register_manager.lockReg(reg),
         else => null,
     };
@@ -3435,7 +3417,7 @@ fn genBinOp(
         if (mcv.isRegister() or mcv.isMemory()) break :blk mcv;
         break :blk MCValue{ .register = try self.copyToTmpRegister(rhs_ty, mcv) };
     };
-    const src_mcv_lock: ?RegisterLock = switch (src_mcv) {
+    const src_mcv_lock: ?GpRegisterLock = switch (src_mcv) {
         .register => |reg| self.register_manager.lockReg(reg),
         else => null,
     };
@@ -3505,10 +3487,10 @@ fn genBinOpMir(self: *Self, mir_tag: Mir.Inst.Tag, dst_ty: Type, dst_mcv: MCValu
                 .register => |src_reg| {
                     _ = try self.addInst(.{
                         .tag = mir_tag,
-                        .ops = (Mir.Ops(Register, Register){
-                            .reg1 = registerAlias(dst_reg, abi_size),
-                            .reg2 = registerAlias(src_reg, abi_size),
-                        }).encode(),
+                        .ops = .{
+                            .reg1 = @enumToInt(registerAlias(dst_reg, abi_size)),
+                            .reg2 = @enumToInt(registerAlias(src_reg, abi_size)),
+                        },
                         .data = undefined,
                     });
                 },
@@ -3518,9 +3500,7 @@ fn genBinOpMir(self: *Self, mir_tag: Mir.Inst.Tag, dst_ty: Type, dst_mcv: MCValu
                 .immediate => |imm| {
                     _ = try self.addInst(.{
                         .tag = mir_tag,
-                        .ops = (Mir.Ops(Register, Register){
-                            .reg1 = registerAlias(dst_reg, abi_size),
-                        }).encode(),
+                        .ops = .{ .reg1 = @enumToInt(registerAlias(dst_reg, abi_size)) },
                         .data = .{ .imm = @truncate(u32, imm) },
                     });
                 },
@@ -3543,11 +3523,11 @@ fn genBinOpMir(self: *Self, mir_tag: Mir.Inst.Tag, dst_ty: Type, dst_mcv: MCValu
                     }
                     _ = try self.addInst(.{
                         .tag = mir_tag,
-                        .ops = (Mir.Ops(Register, Register){
-                            .reg1 = registerAlias(dst_reg, abi_size),
-                            .reg2 = .rbp,
+                        .ops = .{
+                            .reg1 = @enumToInt(registerAlias(dst_reg, abi_size)),
+                            .reg2 = @enumToInt(.rbp),
                             .flags = 0b01,
-                        }).encode(),
+                        },
                         .data = .{ .imm = @bitCast(u32, -off) },
                     });
                 },
@@ -3561,10 +3541,10 @@ fn genBinOpMir(self: *Self, mir_tag: Mir.Inst.Tag, dst_ty: Type, dst_mcv: MCValu
                             .f64 => {
                                 _ = try self.addInst(.{
                                     .tag = mir_tag,
-                                    .ops = (Mir.Ops(AvxRegister, AvxRegister){
-                                        .reg1 = dst_reg.to128(),
-                                        .reg2 = src_reg.to128(),
-                                    }).encode(),
+                                    .ops = .{
+                                        .reg1 = @enumToInt(dst_reg.to128()),
+                                        .reg2 = @enumToInt(src_reg.to128()),
+                                    },
                                     .data = undefined,
                                 });
                             },
@@ -3593,11 +3573,11 @@ fn genBinOpMir(self: *Self, mir_tag: Mir.Inst.Tag, dst_ty: Type, dst_mcv: MCValu
                 .register => |src_reg| {
                     _ = try self.addInst(.{
                         .tag = mir_tag,
-                        .ops = (Mir.Ops(Register, Register){
-                            .reg1 = .rbp,
-                            .reg2 = registerAlias(src_reg, abi_size),
+                        .ops = .{
+                            .reg1 = @enumToInt(.rbp),
+                            .reg2 = @enumToInt(registerAlias(src_reg, abi_size)),
                             .flags = 0b10,
-                        }).encode(),
+                        },
                         .data = .{ .imm = @bitCast(u32, -off) },
                     });
                 },
@@ -3627,10 +3607,10 @@ fn genBinOpMir(self: *Self, mir_tag: Mir.Inst.Tag, dst_ty: Type, dst_mcv: MCValu
                     });
                     _ = try self.addInst(.{
                         .tag = tag,
-                        .ops = (Mir.Ops(Register, Register){
-                            .reg1 = .rbp,
+                        .ops = .{
+                            .reg1 = @enumToInt(.rbp),
                             .flags = flags,
-                        }).encode(),
+                        },
                         .data = .{ .payload = payload },
                     });
                 },
@@ -3687,10 +3667,10 @@ fn genIntMulComplexOpMir(self: *Self, dst_ty: Type, dst_mcv: MCValue, src_mcv: M
                     // register, register
                     _ = try self.addInst(.{
                         .tag = .imul_complex,
-                        .ops = (Mir.Ops(Register, Register){
-                            .reg1 = registerAlias(dst_reg, abi_size),
-                            .reg2 = registerAlias(src_reg, abi_size),
-                        }).encode(),
+                        .ops = .{
+                            .reg1 = @enumToInt(registerAlias(dst_reg, abi_size)),
+                            .reg2 = @enumToInt(registerAlias(src_reg, abi_size)),
+                        },
                         .data = undefined,
                     });
                 },
@@ -3700,11 +3680,11 @@ fn genIntMulComplexOpMir(self: *Self, dst_ty: Type, dst_mcv: MCValue, src_mcv: M
                     if (math.minInt(i32) <= imm and imm <= math.maxInt(i32)) {
                         _ = try self.addInst(.{
                             .tag = .imul_complex,
-                            .ops = (Mir.Ops(Register, Register){
-                                .reg1 = dst_reg.to32(),
-                                .reg2 = dst_reg.to32(),
+                            .ops = .{
+                                .reg1 = @enumToInt(dst_reg.to32()),
+                                .reg2 = @enumToInt(dst_reg.to32()),
                                 .flags = 0b10,
-                            }).encode(),
+                            },
                             .data = .{ .imm = @truncate(u32, imm) },
                         });
                     } else {
@@ -3716,11 +3696,11 @@ fn genIntMulComplexOpMir(self: *Self, dst_ty: Type, dst_mcv: MCValue, src_mcv: M
                 .stack_offset => |off| {
                     _ = try self.addInst(.{
                         .tag = .imul_complex,
-                        .ops = (Mir.Ops(Register, Register){
-                            .reg1 = registerAlias(dst_reg, abi_size),
-                            .reg2 = .rbp,
+                        .ops = .{
+                            .reg1 = @enumToInt(registerAlias(dst_reg, abi_size)),
+                            .reg2 = @enumToInt(.rbp),
                             .flags = 0b01,
-                        }).encode(),
+                        },
                         .data = .{ .imm = @bitCast(u32, -off) },
                     });
                 },
@@ -3754,10 +3734,10 @@ fn genIntMulComplexOpMir(self: *Self, dst_ty: Type, dst_mcv: MCValue, src_mcv: M
                     // register, register
                     _ = try self.addInst(.{
                         .tag = .imul_complex,
-                        .ops = (Mir.Ops(Register, Register){
-                            .reg1 = registerAlias(dst_reg, abi_size),
-                            .reg2 = registerAlias(src_reg, abi_size),
-                        }).encode(),
+                        .ops = .{
+                            .reg1 = @enumToInt(registerAlias(dst_reg, abi_size)),
+                            .reg2 = @enumToInt(registerAlias(src_reg, abi_size)),
+                        },
                         .data = undefined,
                     });
                     // copy dst_reg back out
@@ -3864,9 +3844,7 @@ fn airArg(self: *Self, inst: Air.Inst.Index) !void {
 fn airBreakpoint(self: *Self) !void {
     _ = try self.addInst(.{
         .tag = .interrupt,
-        .ops = (Mir.Ops{
-            .flags = 0b00,
-        }).encode(),
+        .ops = .{},
         .data = undefined,
     });
     return self.finishAirBookkeeping();
@@ -3910,7 +3888,7 @@ fn airCall(self: *Self, inst: Air.Inst.Index, modifier: std.builtin.CallOptions.
         try self.register_manager.getReg(reg, null);
     }
 
-    const rdi_lock: ?RegisterLock = blk: {
+    const rdi_lock: ?GpRegisterLock = blk: {
         if (info.return_value == .stack_offset) {
             const ret_ty = fn_ty.fnReturnType();
             const ret_abi_size = @intCast(u32, ret_ty.abiSize(self.target.*));
@@ -3970,9 +3948,7 @@ fn airCall(self: *Self, inst: Air.Inst.Index, modifier: std.builtin.CallOptions.
         // Adjust the stack
         _ = try self.addInst(.{
             .tag = .sub,
-            .ops = (Mir.Ops(Register, Register){
-                .reg1 = .rsp,
-            }).encode(),
+            .ops = .{ .reg1 = @enumToInt(.rsp) },
             .data = .{ .imm = info.stack_byte_count },
         });
     }
@@ -3996,9 +3972,7 @@ fn airCall(self: *Self, inst: Air.Inst.Index, modifier: std.builtin.CallOptions.
                     unreachable;
                 _ = try self.addInst(.{
                     .tag = .call,
-                    .ops = (Mir.Ops(Register, Register){
-                        .flags = 0b01,
-                    }).encode(),
+                    .ops = .{ .flags = 0b01 },
                     .data = .{ .imm = @truncate(u32, got_addr) },
                 });
             } else if (func_value.castTag(.extern_fn)) |_| {
@@ -4012,10 +3986,10 @@ fn airCall(self: *Self, inst: Air.Inst.Index, modifier: std.builtin.CallOptions.
             try self.genSetReg(Type.initTag(.usize), .rax, mcv);
             _ = try self.addInst(.{
                 .tag = .call,
-                .ops = (Mir.Ops(Register, Register){
-                    .reg1 = .rax,
+                .ops = .{
+                    .reg1 = @enumToInt(.rax),
                     .flags = 0b01,
-                }).encode(),
+                },
                 .data = undefined,
             });
         }
@@ -4030,10 +4004,10 @@ fn airCall(self: *Self, inst: Air.Inst.Index, modifier: std.builtin.CallOptions.
                 // callq *%rax
                 _ = try self.addInst(.{
                     .tag = .call,
-                    .ops = (Mir.Ops(Register, Register){
-                        .reg1 = .rax,
+                    .ops = .{
+                        .reg1 = @enumToInt(.rax),
                         .flags = 0b01,
-                    }).encode(),
+                    },
                     .data = undefined,
                 });
             } else if (func_value.castTag(.extern_fn)) |func_payload| {
@@ -4065,10 +4039,10 @@ fn airCall(self: *Self, inst: Air.Inst.Index, modifier: std.builtin.CallOptions.
             try self.genSetReg(Type.initTag(.usize), .rax, mcv);
             _ = try self.addInst(.{
                 .tag = .call,
-                .ops = (Mir.Ops(Register, Register){
-                    .reg1 = .rax,
+                .ops = .{
+                    .reg1 = @enumToInt(.rax),
                     .flags = 0b01,
-                }).encode(),
+                },
                 .data = undefined,
             });
         }
@@ -4083,9 +4057,7 @@ fn airCall(self: *Self, inst: Air.Inst.Index, modifier: std.builtin.CallOptions.
                 const fn_got_addr = got_addr + got_index * ptr_bytes;
                 _ = try self.addInst(.{
                     .tag = .call,
-                    .ops = (Mir.Ops(Register, Register){
-                        .flags = 0b01,
-                    }).encode(),
+                    .ops = .{ .flags = 0b01 },
                     .data = .{ .imm = @intCast(u32, fn_got_addr) },
                 });
             } else return self.fail("TODO implement calling extern fn on plan9", .{});
@@ -4095,10 +4067,10 @@ fn airCall(self: *Self, inst: Air.Inst.Index, modifier: std.builtin.CallOptions.
             try self.genSetReg(Type.initTag(.usize), .rax, mcv);
             _ = try self.addInst(.{
                 .tag = .call,
-                .ops = (Mir.Ops(Register, Register){
-                    .reg1 = .rax,
+                .ops = .{
+                    .reg1 = @enumToInt(.rax),
                     .flags = 0b01,
-                }).encode(),
+                },
                 .data = undefined,
             });
         }
@@ -4108,9 +4080,7 @@ fn airCall(self: *Self, inst: Air.Inst.Index, modifier: std.builtin.CallOptions.
         // Readjust the stack
         _ = try self.addInst(.{
             .tag = .add,
-            .ops = (Mir.Ops(Register, Register){
-                .reg1 = .rsp,
-            }).encode(),
+            .ops = .{ .reg1 = @enumToInt(.rsp) },
             .data = .{ .imm = info.stack_byte_count },
         });
     }
@@ -4168,9 +4138,7 @@ fn airRet(self: *Self, inst: Air.Inst.Index) !void {
     // which is available if the jump is 127 bytes or less forward.
     const jmp_reloc = try self.addInst(.{
         .tag = .jmp,
-        .ops = (Mir.Ops(Register, Register){
-            .flags = 0b00,
-        }).encode(),
+        .ops = .{},
         .data = .{ .inst = undefined },
     });
     try self.exitlude_jump_relocs.append(self.gpa, jmp_reloc);
@@ -4203,9 +4171,7 @@ fn airRetLoad(self: *Self, inst: Air.Inst.Index) !void {
     // which is available if the jump is 127 bytes or less forward.
     const jmp_reloc = try self.addInst(.{
         .tag = .jmp,
-        .ops = (Mir.Ops(Register, Register){
-            .flags = 0b00,
-        }).encode(),
+        .ops = .{},
         .data = .{ .inst = undefined },
     });
     try self.exitlude_jump_relocs.append(self.gpa, jmp_reloc);
@@ -4254,10 +4220,10 @@ fn airCmp(self: *Self, inst: Air.Inst.Index, op: math.CompareOperator) !void {
 
             _ = try self.addInst(.{
                 .tag = .cmp_f64,
-                .ops = (Mir.Ops(AvxRegister, AvxRegister){
-                    .reg1 = dst_reg,
-                    .reg2 = src_reg,
-                }).encode(),
+                .ops = .{
+                    .reg1 = @enumToInt(dst_reg),
+                    .reg2 = @enumToInt(src_reg),
+                },
                 .data = undefined,
             });
 
@@ -4268,7 +4234,7 @@ fn airCmp(self: *Self, inst: Air.Inst.Index, op: math.CompareOperator) !void {
         // Source operand can be an immediate, 8 bits or 32 bits.
         // TODO look into reusing the operand
         const lhs = try self.resolveInst(bin_op.lhs);
-        const lhs_lock: ?RegisterLock = switch (lhs) {
+        const lhs_lock: ?GpRegisterLock = switch (lhs) {
             .register => |reg| self.register_manager.lockRegAssumeUnused(reg),
             else => null,
         };
@@ -4480,9 +4446,7 @@ fn genCondBrMir(self: *Self, ty: Type, mcv: MCValue) !u32 {
                 Mir.Inst.Tag.cond_jmp_greater_less;
             return self.addInst(.{
                 .tag = tag,
-                .ops = (Mir.Ops(Register, Register){
-                    .flags = flags,
-                }).encode(),
+                .ops = .{ .flags = flags },
                 .data = .{ .inst = undefined },
             });
         },
@@ -4490,17 +4454,12 @@ fn genCondBrMir(self: *Self, ty: Type, mcv: MCValue) !u32 {
             try self.spillCompareFlagsIfOccupied();
             _ = try self.addInst(.{
                 .tag = .@"test",
-                .ops = (Mir.Ops(Register, Register){
-                    .reg1 = reg,
-                    .flags = 0b00,
-                }).encode(),
+                .ops = .{ .reg1 = @enumToInt(reg) },
                 .data = .{ .imm = 1 },
             });
             return self.addInst(.{
                 .tag = .cond_jmp_eq_ne,
-                .ops = (Mir.Ops(Register, Register){
-                    .flags = 0b01,
-                }).encode(),
+                .ops = .{ .flags = 0b01 },
                 .data = .{ .inst = undefined },
             });
         },
@@ -4743,7 +4702,7 @@ fn airIsNullPtr(self: *Self, inst: Air.Inst.Index) !void {
     }
 
     const operand_ptr = try self.resolveInst(un_op);
-    const operand_ptr_lock: ?RegisterLock = switch (operand_ptr) {
+    const operand_ptr_lock: ?GpRegisterLock = switch (operand_ptr) {
         .register => |reg| self.register_manager.lockRegAssumeUnused(reg),
         else => null,
     };
@@ -4783,7 +4742,7 @@ fn airIsNonNullPtr(self: *Self, inst: Air.Inst.Index) !void {
     }
 
     const operand_ptr = try self.resolveInst(un_op);
-    const operand_ptr_lock: ?RegisterLock = switch (operand_ptr) {
+    const operand_ptr_lock: ?GpRegisterLock = switch (operand_ptr) {
         .register => |reg| self.register_manager.lockRegAssumeUnused(reg),
         else => null,
     };
@@ -4823,7 +4782,7 @@ fn airIsErrPtr(self: *Self, inst: Air.Inst.Index) !void {
     }
 
     const operand_ptr = try self.resolveInst(un_op);
-    const operand_ptr_lock: ?RegisterLock = switch (operand_ptr) {
+    const operand_ptr_lock: ?GpRegisterLock = switch (operand_ptr) {
         .register => |reg| self.register_manager.lockRegAssumeUnused(reg),
         else => null,
     };
@@ -4863,7 +4822,7 @@ fn airIsNonErrPtr(self: *Self, inst: Air.Inst.Index) !void {
     }
 
     const operand_ptr = try self.resolveInst(un_op);
-    const operand_ptr_lock: ?RegisterLock = switch (operand_ptr) {
+    const operand_ptr_lock: ?GpRegisterLock = switch (operand_ptr) {
         .register => |reg| self.register_manager.lockRegAssumeUnused(reg),
         else => null,
     };
@@ -4894,9 +4853,7 @@ fn airLoop(self: *Self, inst: Air.Inst.Index) !void {
     try self.genBody(body);
     _ = try self.addInst(.{
         .tag = .jmp,
-        .ops = (Mir.Ops(Register, Register){
-            .flags = 0b00,
-        }).encode(),
+        .ops = .{},
         .data = .{ .inst = jmp_target },
     });
     return self.finishAirBookkeeping();
@@ -4947,19 +4904,17 @@ fn genCondSwitchMir(self: *Self, ty: Type, condition: MCValue, case: MCValue) !u
                 .immediate => |imm| {
                     _ = try self.addInst(.{
                         .tag = .xor,
-                        .ops = (Mir.Ops(Register, Register){
-                            .reg1 = registerAlias(cond_reg, abi_size),
-                        }).encode(),
+                        .ops = .{ .reg1 = @enumToInt(registerAlias(cond_reg, abi_size)) },
                         .data = .{ .imm = @intCast(u32, imm) },
                     });
                 },
                 .register => |reg| {
                     _ = try self.addInst(.{
                         .tag = .xor,
-                        .ops = (Mir.Ops(Register, Register){
-                            .reg1 = registerAlias(cond_reg, abi_size),
-                            .reg2 = registerAlias(reg, abi_size),
-                        }).encode(),
+                        .ops = .{
+                            .reg1 = @enumToInt(registerAlias(cond_reg, abi_size)),
+                            .reg2 = @enumToInt(registerAlias(reg, abi_size)),
+                        },
                         .data = undefined,
                     });
                 },
@@ -4978,17 +4933,15 @@ fn genCondSwitchMir(self: *Self, ty: Type, condition: MCValue, case: MCValue) !u
 
             _ = try self.addInst(.{
                 .tag = .@"test",
-                .ops = (Mir.Ops(Register, Register){
-                    .reg1 = registerAlias(cond_reg, abi_size),
-                    .reg2 = registerAlias(cond_reg, abi_size),
-                }).encode(),
+                .ops = .{
+                    .reg1 = @enumToInt(registerAlias(cond_reg, abi_size)),
+                    .reg2 = @enumToInt(registerAlias(cond_reg, abi_size)),
+                },
                 .data = undefined,
             });
             return self.addInst(.{
                 .tag = .cond_jmp_eq_ne,
-                .ops = (Mir.Ops(Register, Register){
-                    .flags = 0b00,
-                }).encode(),
+                .ops = .{},
                 .data = .{ .inst = undefined },
             });
         },
@@ -5160,9 +5113,7 @@ fn brVoid(self: *Self, block: Air.Inst.Index) !void {
     // Leave the jump offset undefined
     const jmp_reloc = try self.addInst(.{
         .tag = .jmp,
-        .ops = (Mir.Ops(Register, Register){
-            .flags = 0b00,
-        }).encode(),
+        .ops = .{},
         .data = .{ .inst = undefined },
     });
     block_data.relocs.appendAssumeCapacity(jmp_reloc);
@@ -5250,9 +5201,7 @@ fn airAsm(self: *Self, inst: Air.Inst.Index) !void {
                         };
                         _ = try self.addInst(.{
                             .tag = .push,
-                            .ops = (Mir.Ops(Register, Register){
-                                .flags = 0b10,
-                            }).encode(),
+                            .ops = .{ .flags = 0b10 },
                             .data = .{ .imm = n },
                         });
                     } else if (mem.indexOf(u8, arg, "%%")) |l| {
@@ -5261,9 +5210,7 @@ fn airAsm(self: *Self, inst: Air.Inst.Index) !void {
                             return self.fail("unrecognized register: '{s}'", .{reg_name});
                         _ = try self.addInst(.{
                             .tag = .push,
-                            .ops = (Mir.Ops(Register, Register){
-                                .reg1 = reg,
-                            }).encode(),
+                            .ops = .{ .reg1 = @enumToInt(reg) },
                             .data = undefined,
                         });
                     } else return self.fail("TODO more push operands", .{});
@@ -5275,9 +5222,7 @@ fn airAsm(self: *Self, inst: Air.Inst.Index) !void {
                             return self.fail("unrecognized register: '{s}'", .{reg_name});
                         _ = try self.addInst(.{
                             .tag = .pop,
-                            .ops = (Mir.Ops(Register, Register){
-                                .reg1 = reg,
-                            }).encode(),
+                            .ops = .{ .reg1 = @enumToInt(reg) },
                             .data = undefined,
                         });
                     } else return self.fail("TODO more pop operands", .{});
@@ -5393,15 +5338,15 @@ fn genSetStackArg(self: *Self, ty: Type, stack_offset: i32, mcv: MCValue) InnerE
                     });
                     _ = try self.addInst(.{
                         .tag = .mov_mem_imm,
-                        .ops = (Mir.Ops(Register, Register){
-                            .reg1 = .rsp,
+                        .ops = .{
+                            .reg1 = @enumToInt(.rsp),
                             .flags = switch (abi_size) {
                                 1 => 0b00,
                                 2 => 0b01,
                                 4 => 0b10,
                                 else => unreachable,
                             },
-                        }).encode(),
+                        },
                         .data = .{ .payload = payload },
                     });
                 },
@@ -5429,11 +5374,11 @@ fn genSetStackArg(self: *Self, ty: Type, stack_offset: i32, mcv: MCValue) InnerE
         .register => |reg| {
             _ = try self.addInst(.{
                 .tag = .mov,
-                .ops = (Mir.Ops(Register, Register){
-                    .reg1 = .rsp,
-                    .reg2 = registerAlias(reg, @intCast(u32, abi_size)),
+                .ops = .{
+                    .reg1 = @enumToInt(.rsp),
+                    .reg2 = @enumToInt(registerAlias(reg, @intCast(u32, abi_size))),
                     .flags = 0b10,
-                }).encode(),
+                },
                 .data = .{ .imm = @bitCast(u32, -stack_offset) },
             });
         },
@@ -5496,10 +5441,10 @@ fn genSetStack(self: *Self, ty: Type, stack_offset: i32, mcv: MCValue, opts: Inl
             };
             _ = try self.addInst(.{
                 .tag = .cond_set_byte_overflow,
-                .ops = (Mir.Ops(Register, Register){
-                    .reg1 = tmp_reg.to8(),
+                .ops = .{
+                    .reg1 = @enumToInt(tmp_reg.to8()),
                     .flags = flags,
-                }).encode(),
+                },
                 .data = undefined,
             });
 
@@ -5526,15 +5471,15 @@ fn genSetStack(self: *Self, ty: Type, stack_offset: i32, mcv: MCValue, opts: Inl
                     });
                     _ = try self.addInst(.{
                         .tag = .mov_mem_imm,
-                        .ops = (Mir.Ops(Register, Register){
-                            .reg1 = base_reg,
+                        .ops = .{
+                            .reg1 = @enumToInt(base_reg),
                             .flags = switch (abi_size) {
                                 1 => 0b00,
                                 2 => 0b01,
                                 4 => 0b10,
                                 else => unreachable,
                             },
-                        }).encode(),
+                        },
                         .data = .{ .payload = payload },
                     });
                 },
@@ -5548,10 +5493,10 @@ fn genSetStack(self: *Self, ty: Type, stack_offset: i32, mcv: MCValue, opts: Inl
                         });
                         _ = try self.addInst(.{
                             .tag = .mov_mem_imm,
-                            .ops = (Mir.Ops(Register, Register){
-                                .reg1 = base_reg,
+                            .ops = .{
+                                .reg1 = @enumToInt(base_reg),
                                 .flags = 0b10,
-                            }).encode(),
+                            },
                             .data = .{ .payload = payload },
                         });
                     }
@@ -5562,10 +5507,10 @@ fn genSetStack(self: *Self, ty: Type, stack_offset: i32, mcv: MCValue, opts: Inl
                         });
                         _ = try self.addInst(.{
                             .tag = .mov_mem_imm,
-                            .ops = (Mir.Ops(Register, Register){
-                                .reg1 = base_reg,
+                            .ops = .{
+                                .reg1 = @enumToInt(base_reg),
                                 .flags = 0b10,
-                            }).encode(),
+                            },
                             .data = .{ .payload = payload },
                         });
                     }
@@ -5594,11 +5539,11 @@ fn genSetStack(self: *Self, ty: Type, stack_offset: i32, mcv: MCValue, opts: Inl
 
                     _ = try self.addInst(.{
                         .tag = .mov,
-                        .ops = (Mir.Ops(Register, Register){
-                            .reg1 = base_reg,
-                            .reg2 = registerAlias(tmp_reg, nearest_power_of_two),
+                        .ops = .{
+                            .reg1 = @enumToInt(base_reg),
+                            .reg2 = @enumToInt(registerAlias(tmp_reg, nearest_power_of_two)),
                             .flags = 0b10,
-                        }).encode(),
+                        },
                         .data = .{ .imm = @bitCast(u32, -next_offset) },
                     });
 
@@ -5612,11 +5557,11 @@ fn genSetStack(self: *Self, ty: Type, stack_offset: i32, mcv: MCValue, opts: Inl
             } else {
                 _ = try self.addInst(.{
                     .tag = .mov,
-                    .ops = (Mir.Ops(Register, Register){
-                        .reg1 = base_reg,
-                        .reg2 = registerAlias(reg, @intCast(u32, abi_size)),
+                    .ops = .{
+                        .reg1 = @enumToInt(base_reg),
+                        .reg2 = @enumToInt(registerAlias(reg, @intCast(u32, abi_size))),
                         .flags = 0b10,
-                    }).encode(),
+                    },
                     .data = .{ .imm = @bitCast(u32, -stack_offset) },
                 });
             }
@@ -5629,11 +5574,11 @@ fn genSetStack(self: *Self, ty: Type, stack_offset: i32, mcv: MCValue, opts: Inl
                     .f64 => {
                         _ = try self.addInst(.{
                             .tag = .mov_f64,
-                            .ops = (Mir.Ops(Register, AvxRegister){
-                                .reg1 = base_reg,
-                                .reg2 = reg.to128(),
+                            .ops = .{
+                                .reg1 = @enumToInt(base_reg),
+                                .reg2 = @enumToInt(reg.to128()),
                                 .flags = 0b01,
-                            }).encode(),
+                            },
                             .data = .{ .imm = @bitCast(u32, -stack_offset) },
                         });
                     },
@@ -5695,13 +5640,13 @@ fn genInlineMemcpy(
         self.register_manager.unlockReg(lock);
     };
 
-    const ssbase_lock: ?RegisterLock = if (opts.source_stack_base) |reg|
+    const ssbase_lock: ?GpRegisterLock = if (opts.source_stack_base) |reg|
         self.register_manager.lockReg(reg)
     else
         null;
     defer if (ssbase_lock) |reg| self.register_manager.unlockReg(reg);
 
-    const dsbase_lock: ?RegisterLock = if (opts.dest_stack_base) |reg|
+    const dsbase_lock: ?GpRegisterLock = if (opts.dest_stack_base) |reg|
         self.register_manager.lockReg(reg)
     else
         null;
@@ -5718,20 +5663,20 @@ fn genInlineMemcpy(
         .ptr_stack_offset, .stack_offset => |off| {
             _ = try self.addInst(.{
                 .tag = .lea,
-                .ops = (Mir.Ops(Register, Register){
-                    .reg1 = dst_addr_reg.to64(),
-                    .reg2 = opts.dest_stack_base orelse .rbp,
-                }).encode(),
+                .ops = .{
+                    .reg1 = @enumToInt(dst_addr_reg.to64()),
+                    .reg2 = @enumToInt(opts.dest_stack_base orelse .rbp),
+                },
                 .data = .{ .imm = @bitCast(u32, -off) },
             });
         },
         .register => |reg| {
             _ = try self.addInst(.{
                 .tag = .mov,
-                .ops = (Mir.Ops(Register, Register){
-                    .reg1 = registerAlias(dst_addr_reg, @divExact(reg.size(), 8)),
-                    .reg2 = reg,
-                }).encode(),
+                .ops = .{
+                    .reg1 = @enumToInt(registerAlias(dst_addr_reg, @divExact(reg.size(), 8))),
+                    .reg2 = @enumToInt(reg),
+                },
                 .data = undefined,
             });
         },
@@ -5753,20 +5698,20 @@ fn genInlineMemcpy(
         .ptr_stack_offset, .stack_offset => |off| {
             _ = try self.addInst(.{
                 .tag = .lea,
-                .ops = (Mir.Ops(Register, Register){
-                    .reg1 = src_addr_reg.to64(),
-                    .reg2 = opts.source_stack_base orelse .rbp,
-                }).encode(),
+                .ops = .{
+                    .reg1 = @enumToInt(src_addr_reg.to64()),
+                    .reg2 = @enumToInt(opts.source_stack_base orelse .rbp),
+                },
                 .data = .{ .imm = @bitCast(u32, -off) },
             });
         },
         .register => |reg| {
             _ = try self.addInst(.{
                 .tag = .mov,
-                .ops = (Mir.Ops(Register, Register){
-                    .reg1 = registerAlias(src_addr_reg, @divExact(reg.size(), 8)),
-                    .reg2 = reg,
-                }).encode(),
+                .ops = .{
+                    .reg1 = @enumToInt(registerAlias(src_addr_reg, @divExact(reg.size(), 8))),
+                    .reg2 = @enumToInt(reg),
+                },
                 .data = undefined,
             });
         },
@@ -5786,18 +5731,14 @@ fn genInlineMemcpy(
     // mov rcx, 0
     _ = try self.addInst(.{
         .tag = .mov,
-        .ops = (Mir.Ops(Register, Register){
-            .reg1 = .rcx,
-        }).encode(),
+        .ops = .{ .reg1 = @enumToInt(.rcx) },
         .data = .{ .imm = 0 },
     });
 
     // mov rax, 0
     _ = try self.addInst(.{
         .tag = .mov,
-        .ops = (Mir.Ops(Register, Register){
-            .reg1 = .rax,
-        }).encode(),
+        .ops = .{ .reg1 = @enumToInt(.rax) },
         .data = .{ .imm = 0 },
     });
 
@@ -5805,70 +5746,62 @@ fn genInlineMemcpy(
     // cmp count, 0
     const loop_start = try self.addInst(.{
         .tag = .cmp,
-        .ops = (Mir.Ops(Register, Register){
-            .reg1 = count_reg,
-        }).encode(),
+        .ops = .{ .reg1 = @enumToInt(count_reg) },
         .data = .{ .imm = 0 },
     });
 
     // je end
     const loop_reloc = try self.addInst(.{
         .tag = .cond_jmp_eq_ne,
-        .ops = (Mir.Ops(Register, Register){ .flags = 0b01 }).encode(),
+        .ops = .{ .flags = 0b01 },
         .data = .{ .inst = undefined },
     });
 
     // mov tmp, [addr + rcx]
     _ = try self.addInst(.{
         .tag = .mov_scale_src,
-        .ops = (Mir.Ops(Register, Register){
-            .reg1 = tmp_reg.to8(),
-            .reg2 = src_addr_reg,
-        }).encode(),
+        .ops = .{
+            .reg1 = @enumToInt(tmp_reg.to8()),
+            .reg2 = @enumToInt(src_addr_reg),
+        },
         .data = .{ .imm = 0 },
     });
 
     // mov [stack_offset + rax], tmp
     _ = try self.addInst(.{
         .tag = .mov_scale_dst,
-        .ops = (Mir.Ops(Register, Register){
-            .reg1 = dst_addr_reg,
-            .reg2 = tmp_reg.to8(),
-        }).encode(),
+        .ops = .{
+            .reg1 = @enumToInt(dst_addr_reg),
+            .reg2 = @enumToInt(tmp_reg.to8()),
+        },
         .data = .{ .imm = 0 },
     });
 
     // add rcx, 1
     _ = try self.addInst(.{
         .tag = .add,
-        .ops = (Mir.Ops(Register, Register){
-            .reg1 = .rcx,
-        }).encode(),
+        .ops = .{ .reg1 = @enumToInt(.rcx) },
         .data = .{ .imm = 1 },
     });
 
     // add rax, 1
     _ = try self.addInst(.{
         .tag = .add,
-        .ops = (Mir.Ops(Register, Register){
-            .reg1 = .rax,
-        }).encode(),
+        .ops = .{ .reg1 = @enumToInt(.rax) },
         .data = .{ .imm = 1 },
     });
 
     // sub count, 1
     _ = try self.addInst(.{
         .tag = .sub,
-        .ops = (Mir.Ops(Register, Register){
-            .reg1 = count_reg,
-        }).encode(),
+        .ops = .{ .reg1 = @enumToInt(count_reg) },
         .data = .{ .imm = 1 },
     });
 
     // jmp loop
     _ = try self.addInst(.{
         .tag = .jmp,
-        .ops = (Mir.Ops(Register, Register){ .flags = 0b00 }).encode(),
+        .ops = .{},
         .data = .{ .inst = loop_start },
     });
 
@@ -5900,20 +5833,20 @@ fn genInlineMemset(
         .ptr_stack_offset, .stack_offset => |off| {
             _ = try self.addInst(.{
                 .tag = .lea,
-                .ops = (Mir.Ops(Register, Register){
-                    .reg1 = addr_reg.to64(),
-                    .reg2 = opts.dest_stack_base orelse .rbp,
-                }).encode(),
+                .ops = .{
+                    .reg1 = @enumToInt(addr_reg.to64()),
+                    .reg2 = @enumToInt(opts.dest_stack_base orelse .rbp),
+                },
                 .data = .{ .imm = @bitCast(u32, -off) },
             });
         },
         .register => |reg| {
             _ = try self.addInst(.{
                 .tag = .mov,
-                .ops = (Mir.Ops(Register, Register){
-                    .reg1 = registerAlias(addr_reg, @divExact(reg.size(), 8)),
-                    .reg2 = reg,
-                }).encode(),
+                .ops = .{
+                    .reg1 = @enumToInt(registerAlias(addr_reg, @divExact(reg.size(), 8))),
+                    .reg2 = @enumToInt(reg),
+                },
                 .data = undefined,
             });
         },
@@ -5931,16 +5864,14 @@ fn genInlineMemset(
     // cmp rax, -1
     const loop_start = try self.addInst(.{
         .tag = .cmp,
-        .ops = (Mir.Ops(Register, Register){
-            .reg1 = .rax,
-        }).encode(),
+        .ops = .{ .reg1 = @enumToInt(.rax) },
         .data = .{ .imm = @bitCast(u32, @as(i32, -1)) },
     });
 
     // je end
     const loop_reloc = try self.addInst(.{
         .tag = .cond_jmp_eq_ne,
-        .ops = (Mir.Ops(Register, Register){ .flags = 0b01 }).encode(),
+        .ops = .{ .flags = 0b01 },
         .data = .{ .inst = undefined },
     });
 
@@ -5956,9 +5887,7 @@ fn genInlineMemset(
             });
             _ = try self.addInst(.{
                 .tag = .mov_mem_index_imm,
-                .ops = (Mir.Ops(Register, Register){
-                    .reg1 = addr_reg,
-                }).encode(),
+                .ops = .{ .reg1 = @enumToInt(addr_reg) },
                 .data = .{ .payload = payload },
             });
         },
@@ -5968,16 +5897,14 @@ fn genInlineMemset(
     // sub rax, 1
     _ = try self.addInst(.{
         .tag = .sub,
-        .ops = (Mir.Ops(Register, Register){
-            .reg1 = .rax,
-        }).encode(),
+        .ops = .{ .reg1 = @enumToInt(.rax) },
         .data = .{ .imm = 1 },
     });
 
     // jmp loop
     _ = try self.addInst(.{
         .tag = .jmp,
-        .ops = (Mir.Ops(Register, Register){ .flags = 0b00 }).encode(),
+        .ops = .{},
         .data = .{ .inst = loop_start },
     });
 
@@ -6003,10 +5930,10 @@ fn genSetAvxReg(self: *Self, ty: Type, reg: AvxRegister, mcv: MCValue) InnerErro
                         .f64 => {
                             _ = try self.addInst(.{
                                 .tag = .mov_f64,
-                                .ops = (Mir.Ops(AvxRegister, Register){
-                                    .reg1 = reg.to128(),
-                                    .reg2 = .rbp,
-                                }).encode(),
+                                .ops = .{
+                                    .reg1 = @enumToInt(reg.to128()),
+                                    .reg2 = @enumToInt(.rbp),
+                                },
                                 .data = .{ .imm = @bitCast(u32, -off) },
                             });
                         },
@@ -6024,11 +5951,11 @@ fn genSetAvxReg(self: *Self, ty: Type, reg: AvxRegister, mcv: MCValue) InnerErro
                         .f64 => {
                             _ = try self.addInst(.{
                                 .tag = .mov_f64,
-                                .ops = (Mir.Ops(AvxRegister, AvxRegister){
-                                    .reg1 = reg.to128(),
-                                    .reg2 = src_reg.to128(),
+                                .ops = .{
+                                    .reg1 = @enumToInt(reg.to128()),
+                                    .reg2 = @enumToInt(src_reg.to128()),
                                     .flags = 0b10,
-                                }).encode(),
+                                },
                                 .data = undefined,
                             });
                         },
@@ -6048,10 +5975,10 @@ fn genSetAvxReg(self: *Self, ty: Type, reg: AvxRegister, mcv: MCValue) InnerErro
                             try self.loadMemPtrIntoRegister(base_reg, Type.usize, mcv);
                             _ = try self.addInst(.{
                                 .tag = .mov_f64,
-                                .ops = (Mir.Ops(AvxRegister, Register){
-                                    .reg1 = reg.to128(),
-                                    .reg2 = base_reg.to64(),
-                                }).encode(),
+                                .ops = .{
+                                    .reg1 = @enumToInt(reg.to128()),
+                                    .reg2 = @enumToInt(base_reg.to64()),
+                                },
                                 .data = .{ .imm = 0 },
                             });
                         },
@@ -6081,10 +6008,10 @@ fn genSetReg(self: *Self, ty: Type, reg: Register, mcv: MCValue) InnerError!void
             }
             _ = try self.addInst(.{
                 .tag = .lea,
-                .ops = (Mir.Ops(Register, Register){
-                    .reg1 = registerAlias(reg, abi_size),
-                    .reg2 = .rbp,
-                }).encode(),
+                .ops = .{
+                    .reg1 = @enumToInt(registerAlias(reg, abi_size)),
+                    .reg2 = @enumToInt(.rbp),
+                },
                 .data = .{ .imm = @bitCast(u32, -off) },
             });
         },
@@ -6121,10 +6048,10 @@ fn genSetReg(self: *Self, ty: Type, reg: Register, mcv: MCValue) InnerError!void
             };
             _ = try self.addInst(.{
                 .tag = tag,
-                .ops = (Mir.Ops(Register, Register){
-                    .reg1 = reg.to8(),
+                .ops = .{
+                    .reg1 = @enumToInt(reg.to8()),
                     .flags = flags,
-                }).encode(),
+                },
                 .data = undefined,
             });
         },
@@ -6134,10 +6061,10 @@ fn genSetReg(self: *Self, ty: Type, reg: Register, mcv: MCValue) InnerError!void
             if (x == 0) {
                 _ = try self.addInst(.{
                     .tag = .xor,
-                    .ops = (Mir.Ops(Register, Register){
-                        .reg1 = reg.to32(),
-                        .reg2 = reg.to32(),
-                    }).encode(),
+                    .ops = .{
+                        .reg1 = @enumToInt(reg.to32()),
+                        .reg2 = @enumToInt(reg.to32()),
+                    },
                     .data = undefined,
                 });
                 return;
@@ -6146,9 +6073,7 @@ fn genSetReg(self: *Self, ty: Type, reg: Register, mcv: MCValue) InnerError!void
                 // Next best case: if we set the lower four bytes, the upper four will be zeroed.
                 _ = try self.addInst(.{
                     .tag = .mov,
-                    .ops = (Mir.Ops(Register, Register){
-                        .reg1 = registerAlias(reg, abi_size),
-                    }).encode(),
+                    .ops = .{ .reg1 = @enumToInt(registerAlias(reg, abi_size)) },
                     .data = .{ .imm = @truncate(u32, x) },
                 });
                 return;
@@ -6163,9 +6088,7 @@ fn genSetReg(self: *Self, ty: Type, reg: Register, mcv: MCValue) InnerError!void
             const payload = try self.addExtra(Mir.Imm64.encode(x));
             _ = try self.addInst(.{
                 .tag = .movabs,
-                .ops = (Mir.Ops(Register, Register){
-                    .reg1 = reg.to64(),
-                }).encode(),
+                .ops = .{ .reg1 = @enumToInt(reg.to64()) },
                 .data = .{ .payload = payload },
             });
         },
@@ -6180,10 +6103,10 @@ fn genSetReg(self: *Self, ty: Type, reg: Register, mcv: MCValue) InnerError!void
                         if (abi_size > 4) break :blk;
                         _ = try self.addInst(.{
                             .tag = .mov_sign_extend,
-                            .ops = (Mir.Ops(Register, Register){
-                                .reg1 = reg.to64(),
-                                .reg2 = registerAlias(src_reg, abi_size),
-                            }).encode(),
+                            .ops = .{
+                                .reg1 = @enumToInt(reg.to64()),
+                                .reg2 = @enumToInt(registerAlias(src_reg, abi_size)),
+                            },
                             .data = undefined,
                         });
                     },
@@ -6191,10 +6114,10 @@ fn genSetReg(self: *Self, ty: Type, reg: Register, mcv: MCValue) InnerError!void
                         if (abi_size > 2) break :blk;
                         _ = try self.addInst(.{
                             .tag = .mov_zero_extend,
-                            .ops = (Mir.Ops(Register, Register){
-                                .reg1 = reg.to64(),
-                                .reg2 = registerAlias(src_reg, abi_size),
-                            }).encode(),
+                            .ops = .{
+                                .reg1 = @enumToInt(reg.to64()),
+                                .reg2 = @enumToInt(registerAlias(src_reg, abi_size)),
+                            },
                             .data = undefined,
                         });
                     },
@@ -6204,10 +6127,10 @@ fn genSetReg(self: *Self, ty: Type, reg: Register, mcv: MCValue) InnerError!void
 
             _ = try self.addInst(.{
                 .tag = .mov,
-                .ops = (Mir.Ops(Register, Register){
-                    .reg1 = registerAlias(reg, abi_size),
-                    .reg2 = registerAlias(src_reg, abi_size),
-                }).encode(),
+                .ops = .{
+                    .reg1 = @enumToInt(registerAlias(reg, abi_size)),
+                    .reg2 = @enumToInt(registerAlias(src_reg, abi_size)),
+                },
                 .data = undefined,
             });
         },
@@ -6217,11 +6140,11 @@ fn genSetReg(self: *Self, ty: Type, reg: Register, mcv: MCValue) InnerError!void
             try self.loadMemPtrIntoRegister(reg, Type.usize, mcv);
             _ = try self.addInst(.{
                 .tag = .mov,
-                .ops = (Mir.Ops(Register, Register){
-                    .reg1 = registerAlias(reg, abi_size),
-                    .reg2 = reg.to64(),
+                .ops = .{
+                    .reg1 = @enumToInt(registerAlias(reg, abi_size)),
+                    .reg2 = @enumToInt(reg.to64()),
                     .flags = 0b01,
-                }).encode(),
+                },
                 .data = .{ .imm = 0 },
             });
         },
@@ -6230,10 +6153,10 @@ fn genSetReg(self: *Self, ty: Type, reg: Register, mcv: MCValue) InnerError!void
                 // mov reg, [ds:imm32]
                 _ = try self.addInst(.{
                     .tag = .mov,
-                    .ops = (Mir.Ops(Register, Register){
-                        .reg1 = registerAlias(reg, abi_size),
+                    .ops = .{
+                        .reg1 = @enumToInt(registerAlias(reg, abi_size)),
                         .flags = 0b01,
-                    }).encode(),
+                    },
                     .data = .{ .imm = @truncate(u32, x) },
                 });
             } else {
@@ -6244,10 +6167,10 @@ fn genSetReg(self: *Self, ty: Type, reg: Register, mcv: MCValue) InnerError!void
                     const payload = try self.addExtra(Mir.Imm64.encode(x));
                     _ = try self.addInst(.{
                         .tag = .movabs,
-                        .ops = (Mir.Ops(Register, Register){
-                            .reg1 = .rax,
+                        .ops = .{
+                            .reg1 = @enumToInt(.rax),
                             .flags = 0b01, // imm64 will become moffs64
-                        }).encode(),
+                        },
                         .data = .{ .payload = payload },
                     });
                 } else {
@@ -6257,11 +6180,11 @@ fn genSetReg(self: *Self, ty: Type, reg: Register, mcv: MCValue) InnerError!void
                     // mov reg, [reg + 0x0]
                     _ = try self.addInst(.{
                         .tag = .mov,
-                        .ops = (Mir.Ops(Register, Register){
-                            .reg1 = registerAlias(reg, abi_size),
-                            .reg2 = reg.to64(),
+                        .ops = .{
+                            .reg1 = @enumToInt(registerAlias(reg, abi_size)),
+                            .reg2 = @enumToInt(reg.to64()),
                             .flags = 0b01,
-                        }).encode(),
+                        },
                         .data = .{ .imm = 0 },
                     });
                 }
@@ -6283,11 +6206,11 @@ fn genSetReg(self: *Self, ty: Type, reg: Register, mcv: MCValue) InnerError!void
                         };
                         _ = try self.addInst(.{
                             .tag = .mov_sign_extend,
-                            .ops = (Mir.Ops(Register, Register){
-                                .reg1 = reg.to64(),
-                                .reg2 = .rbp,
+                            .ops = .{
+                                .reg1 = @enumToInt(reg.to64()),
+                                .reg2 = @enumToInt(.rbp),
                                 .flags = flags,
-                            }).encode(),
+                            },
                             .data = .{ .imm = @bitCast(u32, -off) },
                         });
                     },
@@ -6299,11 +6222,11 @@ fn genSetReg(self: *Self, ty: Type, reg: Register, mcv: MCValue) InnerError!void
                         };
                         _ = try self.addInst(.{
                             .tag = .mov_zero_extend,
-                            .ops = (Mir.Ops(Register, Register){
-                                .reg1 = reg.to64(),
-                                .reg2 = .rbp,
+                            .ops = .{
+                                .reg1 = @enumToInt(reg.to64()),
+                                .reg2 = @enumToInt(.rbp),
                                 .flags = flags,
-                            }).encode(),
+                            },
                             .data = .{ .imm = @bitCast(u32, -off) },
                         });
                     },
@@ -6313,11 +6236,11 @@ fn genSetReg(self: *Self, ty: Type, reg: Register, mcv: MCValue) InnerError!void
 
             _ = try self.addInst(.{
                 .tag = .mov,
-                .ops = (Mir.Ops(Register, Register){
-                    .reg1 = registerAlias(reg, abi_size),
-                    .reg2 = .rbp,
+                .ops = .{
+                    .reg1 = @enumToInt(registerAlias(reg, abi_size)),
+                    .reg2 = @enumToInt(.rbp),
                     .flags = 0b01,
-                }).encode(),
+                },
                 .data = .{ .imm = @bitCast(u32, -off) },
             });
         },
@@ -6384,14 +6307,14 @@ fn airFloatToInt(self: *Self, inst: Air.Inst.Index) !void {
     };
     _ = try self.addInst(.{
         .tag = .fld,
-        .ops = (Mir.Ops(Register, Register){
+        .ops = .{
+            .reg1 = @enumToInt(.rbp),
             .flags = switch (src_ty.abiSize(self.target.*)) {
                 4 => 0b01,
                 8 => 0b10,
                 else => |size| return self.fail("TODO load ST(0) with abiSize={}", .{size}),
             },
-            .reg1 = .rbp,
-        }).encode(),
+        },
         .data = .{ .imm = @bitCast(u32, -stack_offset) },
     });
 
@@ -6399,15 +6322,15 @@ fn airFloatToInt(self: *Self, inst: Air.Inst.Index) !void {
     const stack_dst = try self.allocRegOrMem(inst, false);
     _ = try self.addInst(.{
         .tag = .fisttp,
-        .ops = (Mir.Ops(Register, Register){
+        .ops = .{
+            .reg1 = @enumToInt(.rbp),
             .flags = switch (dst_ty.abiSize(self.target.*)) {
                 1...2 => 0b00,
                 3...4 => 0b01,
                 5...8 => 0b10,
                 else => |size| return self.fail("TODO convert float with abiSize={}", .{size}),
             },
-            .reg1 = .rbp,
-        }).encode(),
+        },
         .data = .{ .imm = @bitCast(u32, -stack_dst.stack_offset) },
     });
 
@@ -6444,21 +6367,21 @@ fn airMemset(self: *Self, inst: Air.Inst.Index) !void {
     const extra = self.air.extraData(Air.Bin, pl_op.payload).data;
 
     const dst_ptr = try self.resolveInst(pl_op.operand);
-    const dst_ptr_lock: ?RegisterLock = switch (dst_ptr) {
+    const dst_ptr_lock: ?GpRegisterLock = switch (dst_ptr) {
         .register => |reg| self.register_manager.lockRegAssumeUnused(reg),
         else => null,
     };
     defer if (dst_ptr_lock) |lock| self.register_manager.unlockReg(lock);
 
     const src_val = try self.resolveInst(extra.lhs);
-    const src_val_lock: ?RegisterLock = switch (src_val) {
+    const src_val_lock: ?GpRegisterLock = switch (src_val) {
         .register => |reg| self.register_manager.lockRegAssumeUnused(reg),
         else => null,
     };
     defer if (src_val_lock) |lock| self.register_manager.unlockReg(lock);
 
     const len = try self.resolveInst(extra.rhs);
-    const len_lock: ?RegisterLock = switch (len) {
+    const len_lock: ?GpRegisterLock = switch (len) {
         .register => |reg| self.register_manager.lockRegAssumeUnused(reg),
         else => null,
     };
@@ -6474,7 +6397,7 @@ fn airMemcpy(self: *Self, inst: Air.Inst.Index) !void {
     const extra = self.air.extraData(Air.Bin, pl_op.payload).data;
 
     const dst_ptr = try self.resolveInst(pl_op.operand);
-    const dst_ptr_lock: ?RegisterLock = switch (dst_ptr) {
+    const dst_ptr_lock: ?GpRegisterLock = switch (dst_ptr) {
         .register => |reg| self.register_manager.lockRegAssumeUnused(reg),
         else => null,
     };
@@ -6503,11 +6426,11 @@ fn airMemcpy(self: *Self, inst: Air.Inst.Index) !void {
                 try self.loadMemPtrIntoRegister(reg, src_ty, src_ptr);
                 _ = try self.addInst(.{
                     .tag = .mov,
-                    .ops = (Mir.Ops(Register, Register){
-                        .reg1 = reg,
-                        .reg2 = reg,
+                    .ops = .{
+                        .reg1 = @enumToInt(reg),
+                        .reg2 = @enumToInt(reg),
                         .flags = 0b01,
-                    }).encode(),
+                    },
                     .data = .{ .imm = 0 },
                 });
                 break :blk MCValue{ .register = reg };
