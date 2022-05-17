@@ -761,6 +761,14 @@ pub const Object = struct {
         try self.updateDeclExports(module, decl_index, decl_exports);
     }
 
+    /// TODO replace this with a call to `Module::getNamedValue`. This will require adding
+    /// a new wrapper in zig_llvm.h/zig_llvm.cpp.
+    fn getLlvmGlobal(o: Object, name: [*:0]const u8) ?*const llvm.Value {
+        if (o.llvm_module.getNamedFunction(name)) |x| return x;
+        if (o.llvm_module.getNamedGlobal(name)) |x| return x;
+        return null;
+    }
+
     pub fn updateDeclExports(
         self: *Object,
         module: *Module,
@@ -827,6 +835,27 @@ pub const Object = struct {
                     llvm_global.setThreadLocalMode(.GeneralDynamicTLSModel);
                 }
             }
+
+            // Detect if the LLVM global has already been created as an extern. In such
+            // case, we need to replace all uses of it with this exported global.
+            extern_collision: {
+                // TODO update std.builtin.ExportOptions to have the name be a
+                // null-terminated slice.
+                const exp_name_z = try module.gpa.dupeZ(u8, exp_name);
+                defer module.gpa.free(exp_name_z);
+
+                const other_global = self.getLlvmGlobal(exp_name_z.ptr).?;
+                if (other_global == llvm_global) break :extern_collision;
+
+                // replaceAllUsesWith requires the type to be unchanged. So we bitcast
+                // the new global to the old type and use that as the thing to replace
+                // old uses.
+                const new_global_ptr = llvm_global.constBitCast(other_global.typeOf());
+                other_global.replaceAllUsesWith(new_global_ptr);
+                llvm_global.takeName(other_global);
+                other_global.deleteGlobal();
+            }
+
             // If a Decl is exported more than one time (which is rare),
             // we add aliases for all but the first export.
             // TODO LLVM C API does not support deleting aliases. We need to
