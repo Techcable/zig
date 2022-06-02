@@ -1834,7 +1834,7 @@ const Parser = struct {
     ///      / KEYWORD_break BreakLabel? Expr?
     ///      / KEYWORD_comptime Expr
     ///      / KEYWORD_nosuspend Expr
-    ///      / KEYWORD_continue BreakLabel?
+    ///      / KEYWORD_continue BreakLabel? Expr?
     ///      / KEYWORD_resume Expr
     ///      / KEYWORD_return Expr?
     ///      / BlockLabel? LoopExpr
@@ -1844,6 +1844,7 @@ const Parser = struct {
         switch (p.token_tags[p.tok_i]) {
             .keyword_asm => return p.expectAsmExpr(),
             .keyword_if => return p.parseIfExpr(),
+            // TODO: Reduce code duplication between break/continue?
             .keyword_break => {
                 p.tok_i += 1;
                 return p.addNode(.{
@@ -1862,7 +1863,7 @@ const Parser = struct {
                     .main_token = p.tok_i - 1,
                     .data = .{
                         .lhs = try p.parseBreakLabel(),
-                        .rhs = undefined,
+                        .rhs = try p.parseExpr(),
                     },
                 });
             },

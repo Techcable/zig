@@ -503,7 +503,7 @@ fn renderExpression(gpa: Allocator, ais: *Ais, tree: Ast, node: Ast.Node.Index, 
             return renderToken(ais, tree, datas[node].rhs, space);
         },
 
-        .@"break" => {
+        .@"break", .@"continue" => {
             const main_token = main_tokens[node];
             const label_token = datas[node].lhs;
             const target = datas[node].rhs;
@@ -521,18 +521,6 @@ fn renderExpression(gpa: Allocator, ais: *Ais, tree: Ast, node: Ast.Node.Index, 
                 try renderToken(ais, tree, label_token - 1, .none); // colon
                 try renderToken(ais, tree, label_token, .space); // identifier
                 try renderExpression(gpa, ais, tree, target, space);
-            }
-        },
-
-        .@"continue" => {
-            const main_token = main_tokens[node];
-            const label = datas[node].lhs;
-            if (label != 0) {
-                try renderToken(ais, tree, main_token, .space); // continue
-                try renderToken(ais, tree, label - 1, .none); // :
-                return renderToken(ais, tree, label, space); // label
-            } else {
-                return renderToken(ais, tree, main_token, space); // continue
             }
         },
 

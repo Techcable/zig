@@ -1177,8 +1177,10 @@ struct AstNodeResumeExpr {
     AstNode *expr;
 };
 
+// TODO: Combine with BreakExpr?
 struct AstNodeContinueExpr {
     Buf *name;
+    AstNode *expr; // may be null
 };
 
 struct AstNodeAwaitExpr {

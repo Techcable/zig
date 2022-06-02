@@ -1278,7 +1278,7 @@ static AstNode *ast_parse_prefix_expr(ParseContext *pc) {
 //      / KEYWORD_break BreakLabel? Expr?
 //      / KEYWORD_comptime Expr
 //      / KEYWORD_nosuspend Expr
-//      / KEYWORD_continue BreakLabel?
+//      / KEYWORD_continue BreakLabel? Expr?
 //      / KEYWORD_resume Expr
 //      / KEYWORD_return Expr?
 //      / BlockLabel? LoopExpr
@@ -1323,8 +1323,10 @@ static AstNode *ast_parse_primary_expr(ParseContext *pc) {
     TokenIndex continue_token = eat_token_if(pc, TokenIdKeywordContinue);
     if (continue_token != 0) {
         TokenIndex label = ast_parse_break_label(pc);
+        AstNode *expr = ast_parse_expr(pc);
         AstNode *res = ast_create_node(pc, NodeTypeContinue, continue_token);
         res->data.continue_expr.name = token_buf(pc, label);
+        res->data.continue_expr.expr = expr;
         return res;
     }
 

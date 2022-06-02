@@ -1067,14 +1067,8 @@ pub fn lastToken(tree: Ast, node: Node.Index) TokenIndex {
             n = extra.sentinel;
         },
 
-        .@"continue" => {
-            if (datas[n].lhs != 0) {
-                return datas[n].lhs + end_offset;
-            } else {
-                return main_tokens[n] + end_offset;
-            }
-        },
-        .@"break" => {
+        // Both break and continue have lhs label and rhs expression
+        .@"break", .@"continue" => {
             if (datas[n].rhs != 0) {
                 n = datas[n].rhs;
             } else if (datas[n].lhs != 0) {
@@ -2874,7 +2868,10 @@ pub const Node = struct {
         @"suspend",
         /// `resume lhs`. rhs is unused.
         @"resume",
-        /// `continue`. lhs is token index of label if any. rhs is unused.
+        /// `continue :lhs rhs`.
+        ///
+        /// lhs is token index of label (if any).
+        /// rhs is expression. It is only used in labled switch.
         @"continue",
         /// `break :lhs rhs`
         /// both lhs and rhs may be omitted.

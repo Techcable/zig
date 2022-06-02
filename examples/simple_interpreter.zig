@@ -140,14 +140,14 @@ fn eval(ctx: *InsnCtx) Value {
                 continue :evalLoop ctx.ip[0].opcode;
             },
             .RETURN => {
-                const done = @"return"(ctx);        
+                const done = @"return"(ctx);
                 if (done.return_value) |value| {
                     return value;
                 } else {
                     unreachable;
                 }
-            }
-        };
+            },
+        }
     }
 }
 

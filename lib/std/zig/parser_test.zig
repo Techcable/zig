@@ -3241,7 +3241,7 @@ test "zig fmt: switch" {
         \\    }
         \\
         \\    foo: switch (state) {
-        \\        17 => {},
+        \\        17 => continue :foo 18,
         \\        else => {},
         \\    }
         \\}
