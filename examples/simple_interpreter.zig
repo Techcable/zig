@@ -1,35 +1,9 @@
-//! This is a basic implementation of a "tail call interpreter"
+//! This is a simple example implementation of an interpreter
 //!
-//! The basic idea is described on this blog post:
-//! https://blog.reverberate.org/2021/04/21/musttail-efficient-interpreters.html
+//! Originally it used a series of tail calls as a substitue for computed goto.
+//! See here: https://blog.reverberate.org/2021/04/21/musttail-efficient-interpreters.html
 //!
-//! It is an effective substitute for computed goto.
-//! Zig lacks computed goto (for now). See issue #8220 for (accepted) fix.
-//!
-//! As the blog post describes, this can actually generate not just equivalent code
-//! as computed goto, but in many cases much better.
-//!
-//! This is due to the optimizer prefering small functions with no branches
-//! over
-//!
-//! Regardless of the relative benefits of each approach,
-//! zig supports forcing tail calls with @call() and .always_tail, but it
-//! does not support computed goto.
-//!
-//! Unfortunately, right now (as of Jun 1st) I am having
-//! an issue using .always_tail
-//!
-//! It triggers a compiler bug.
-//! The Zig compiler outputs malformed LLVM IR.
-//!
-//! Here is a somewhat minimized version of my tail-call interpreter.
-//!
-//! It triggers the bug in the compiler.
-//!
-//! Switching from `.always_tail` to `.auto` avoids the bug,
-//! but it would eventually blow the stack in a real interpreter.
-//!
-//! See `dispatch_direct` for the location of the `.always_tail` call 
+//! It has since been rewritten to use a simple switch statement
 const std = @import("std");
 const assert = std.debug.assert;
 
@@ -78,7 +52,9 @@ pub const InsnCtx = struct {
 };
 
 /// Marker value
-const InsnDone = struct {};
+const InsnDone = struct {
+    return_value: ?Value = null,
+};
 
 // We unpack the fields of `InsnCtx` so everything is passed in registers
 const RawDispatchFn = fn (
@@ -105,15 +81,9 @@ inline fn dispatch_next(ctx: *InsnCtx) InsnDone {
 }
 
 inline fn dispatch_direct(ctx: *InsnCtx) InsnDone {
-    // decode oparg
+    // decode next oparg
     ctx.oparg = ctx.ip[0].oparg;
-    const tgt: RawDispatchFn = DISPATCH_TABLE[@enumToInt(ctx.ip[0].opcode)];
-    return @call(
-        // This triggers a bug!
-        .{ .modifier = .always_tail },
-        tgt,
-        .{ ctx.oparg, ctx.ip, ctx.stack_ptr, ctx.frame_ctx },
-    );
+    return InsnDone{};
 }
 
 /// Wrap a `fn(*InsnCtx) InsnDone` -> RawDispatchFn
@@ -144,23 +114,22 @@ fn wrap_eval_func(comptime tgt: fn (*InsnCtx) InsnDone) RawDispatchFn {
     return wrapper.wrapped;
 }
 
-const OPCODE_IMPLS = std.enums.EnumFieldStruct(Opcode, fn (*InsnCtx) InsnDone, null){
-    .LOAD_IMM = load_imm,
-    .POP = pop,
-    .ADD = arithop,
-    .SUB = arithop,
-    .MUL = arithop,
-    .PRINT = print,
-    .RETURN = @"return",
-};
-const DISPATCH_TABLE: [256]RawDispatchFn = buildTable: {
-    var res: [256]RawDispatchFn = undefined;
-    std.mem.set(RawDispatchFn, &res, wrap_eval_func(unimpl_opcode));
-    inline for (std.enums.values(Opcode)) |opcode| {
-        res[@enumToInt(opcode)] = wrap_eval_func(@field(OPCODE_IMPLS, @tagName(opcode)));
+fn eval(ctx: *InsnCtx) Value {
+    // decode first oparg
+    ctx.oparg = ctx.ip[0].oparg;
+    while (true) {
+        const done = switch (ctx.ip[0].opcode) {
+            .LOAD_IMM => load_imm(ctx),
+            .POP => pop(ctx),
+            .ADD, .SUB, .MUL => arithop(ctx),
+            .PRINT => print(ctx),
+            .RETURN => @"return"(ctx),
+        };
+        if (done.return_value) |value| {
+            return value;
+        }
     }
-    break :buildTable res;
-};
+}
 
 fn load_imm(
     ctx: *InsnCtx,
@@ -218,8 +187,8 @@ fn @"return"(
     ctx: *InsnCtx,
 ) InsnDone {
     // done with retrned
-    _ = ctx.pop();
-    return InsnDone{};
+    const val = ctx.pop();
+    return InsnDone{ .return_value = val };
 }
 
 fn unimpl_opcode(
@@ -252,8 +221,8 @@ fn interpret(name: []const u8, bytecode: []const BytecodeInsn) void {
         .stack_ptr = frame.stack.ptr,
         .frame_ctx = &frame,
     };
-    // begin dispatch loop (starting at first insn)
-    _ = dispatch_direct(&ctx);
+    // begin dispatch loop
+    _ = eval(&ctx);
 }
 
 pub fn main() !void {
