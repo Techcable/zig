@@ -909,7 +909,6 @@ static AstNode *ast_parse_container_field(ParseContext *pc) {
 //      / KEYWORD_errdefer Payload? BlockExprStatement
 //      / IfStatement
 //      / LabeledStatement
-//      / SwitchExpr
 //      / AssignExpr SEMICOLON
 static AstNode *ast_parse_statement(ParseContext *pc) {
     TokenIndex comptime = eat_token_if(pc, TokenIdKeywordCompTime);
@@ -969,10 +968,6 @@ static AstNode *ast_parse_statement(ParseContext *pc) {
     AstNode *labeled_statement = ast_parse_labeled_statement(pc);
     if (labeled_statement != nullptr)
         return labeled_statement;
-
-    AstNode *switch_expr = ast_parse_switch_expr(pc);
-    if (switch_expr != nullptr)
-        return switch_expr;
 
     AstNode *assign = ast_parse_assign_expr(pc);
     if (assign != nullptr) {
@@ -1040,7 +1035,7 @@ static AstNode *ast_parse_if_statement(ParseContext *pc) {
     return res;
 }
 
-// LabeledStatement <- BlockLabel? (Block / LoopStatement)
+// LabeledStatement <- BlockLabel? (Block / LoopStatement / SwitchExpr)
 static AstNode *ast_parse_labeled_statement(ParseContext *pc) {
     TokenIndex label = ast_parse_block_label(pc);
     AstNode *block = ast_parse_block(pc);
@@ -1063,6 +1058,12 @@ static AstNode *ast_parse_labeled_statement(ParseContext *pc) {
                 zig_unreachable();
         }
         return loop;
+    }
+
+    AstNode *switchExpr = ast_parse_switch_expr(pc);
+    if (switchExpr != nullptr) {
+        switchExpr->data.switch_expr.name = token_buf(pc, label);
+        return switchExpr;
     }
 
     if (label != 0)

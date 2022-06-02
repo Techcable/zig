@@ -197,7 +197,7 @@ pub fn renderError(tree: Ast, parse_error: Error, stream: anytype) !void {
             });
         },
         .expected_labelable => {
-            return stream.print("expected 'while', 'for', 'inline', 'suspend', or '{{', found '{s}'", .{
+            return stream.print("expected 'while', 'for', 'switch', 'inline', 'suspend', or '{{', found '{s}'", .{
                 token_tags[parse_error.token + @boolToInt(parse_error.token_is_prev)].symbol(),
             });
         },
@@ -377,8 +377,6 @@ pub fn firstToken(tree: Ast, node: Node.Index) TokenIndex {
         .@"try",
         .@"await",
         .optional_type,
-        .@"switch",
-        .switch_comma,
         .if_simple,
         .@"if",
         .@"suspend",
@@ -656,6 +654,20 @@ pub fn firstToken(tree: Ast, node: Node.Index) TokenIndex {
             }
             return result - end_offset;
         },
+        // Must include here, because .switch_comma is handled in render
+        //
+        // This could trigger a bug with missing newline
+        .switch_comma, .@"switch" => {
+            // Look for a label (no `inline` keyword)
+            const main_token = main_tokens[n];
+            var result = main_token;
+
+            assert(token_tags[main_token] == .keyword_switch);
+            if (token_tags[result - 1] == .colon) {
+                result -= 2;
+            }
+            return result - end_offset;
+        },
     };
 }
 
@@ -809,6 +821,7 @@ pub fn lastToken(tree: Ast, node: Node.Index) TokenIndex {
         },
         .@"switch" => {
             const cases = tree.extraData(datas[n].rhs, Node.SubRange);
+
             if (cases.end - cases.start == 0) {
                 end_offset += 3; // rparen, lbrace, rbrace
                 n = datas[n].lhs; // condition expression
@@ -2822,6 +2835,8 @@ pub const Node = struct {
         /// main_token is the `(`.
         async_call_comma,
         /// `switch(lhs) {}`. `SubRange[rhs]`.
+        ///
+        /// NOTE: Switches may be labeled
         @"switch",
         /// Same as switch except there is known to be a trailing comma
         /// before the final rbrace

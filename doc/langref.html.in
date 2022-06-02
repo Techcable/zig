@@ -12309,14 +12309,13 @@ Statement
      / KEYWORD_errdefer Payload? BlockExprStatement
      / IfStatement
      / LabeledStatement
-     / SwitchExpr
      / AssignExpr SEMICOLON
 
 IfStatement
     <- IfPrefix BlockExpr ( KEYWORD_else Payload? Statement )?
      / IfPrefix AssignExpr ( SEMICOLON / KEYWORD_else Payload? Statement )
 
-LabeledStatement <- BlockLabel? (Block / LoopStatement)
+LabeledStatement <- BlockLabel? (Block / LoopStatement / SwitchExpr)
 
 LoopStatement <- KEYWORD_inline? (ForStatement / WhileStatement)
 

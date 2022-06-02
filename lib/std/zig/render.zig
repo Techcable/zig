@@ -670,6 +670,13 @@ fn renderExpression(gpa: Allocator, ais: *Ais, tree: Ast, node: Ast.Node.Index, 
             const cases = tree.extra_data[extra.start..extra.end];
             const rparen = tree.lastToken(condition) + 1;
 
+            if (token_tags[switch_token - 1] == .colon and
+                token_tags[switch_token - 2] == .identifier)
+            {
+                assert(tree.firstToken(node) < switch_token);
+                try renderToken(ais, tree, switch_token - 2, .none); // name
+                try renderToken(ais, tree, switch_token - 1, .space); // colon
+            }
             try renderToken(ais, tree, switch_token, .space); // switch keyword
             try renderToken(ais, tree, switch_token + 1, .none); // lparen
             try renderExpression(gpa, ais, tree, condition, .none); // condtion expression

@@ -3239,6 +3239,11 @@ test "zig fmt: switch" {
         \\        Union.Int => |int| {},
         \\        Union.Float => |*float| unreachable,
         \\    }
+        \\
+        \\    foo: switch (state) {
+        \\        17 => {},
+        \\        else => {},
+        \\    }
         \\}
         \\
     );

@@ -1030,6 +1030,7 @@ struct AstNodeForExpr {
 
 struct AstNodeSwitchExpr {
     AstNode *expr;
+    Buf *name;
     ZigList<AstNode *> prongs;
 };
 

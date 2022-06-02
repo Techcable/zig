@@ -915,7 +915,6 @@ const Parser = struct {
     ///      / KEYWORD_errdefer Payload? BlockExprStatement
     ///      / IfStatement
     ///      / LabeledStatement
-    ///      / SwitchExpr
     ///      / AssignExpr SEMICOLON
     fn parseStatement(p: *Parser) Error!Node.Index {
         const comptime_token = p.eatToken(.keyword_comptime);
@@ -976,7 +975,6 @@ const Parser = struct {
                     .rhs = try p.expectBlockExprStatement(),
                 },
             }),
-            .keyword_switch => return p.expectSwitchExpr(),
             .keyword_if => return p.expectIfStatement(),
             else => {},
         }
@@ -1081,7 +1079,7 @@ const Parser = struct {
         });
     }
 
-    /// LabeledStatement <- BlockLabel? (Block / LoopStatement)
+    /// LabeledStatement <- BlockLabel? (Block / LoopStatement / SwitchExpr)
     fn parseLabeledStatement(p: *Parser) !Node.Index {
         const label_token = p.parseBlockLabel();
         const block = try p.parseBlock();
@@ -1089,6 +1087,12 @@ const Parser = struct {
 
         const loop_stmt = try p.parseLoopStatement();
         if (loop_stmt != 0) return loop_stmt;
+
+        if (p.token_tags[p.tok_i] == .keyword_switch) {
+            const switch_expr = try p.expectSwitchExpr();
+            assert(switch_expr != 0);
+            return switch_expr;
+        }
 
         if (label_token != 0) {
             return p.fail(.expected_labelable);
