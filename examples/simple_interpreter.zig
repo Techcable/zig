@@ -54,6 +54,10 @@ pub const InsnCtx = struct {
 /// Marker value
 const InsnDone = struct {
     return_value: ?Value = null,
+
+    fn verify_continue(self: InsnDone) void {
+        assert(self.return_value == null);
+    }
 };
 
 // We unpack the fields of `InsnCtx` so everything is passed in registers
@@ -118,16 +122,32 @@ fn eval(ctx: *InsnCtx) Value {
     // decode first oparg
     ctx.oparg = ctx.ip[0].oparg;
     while (true) {
-        const done = switch (ctx.ip[0].opcode) {
-            .LOAD_IMM => load_imm(ctx),
-            .POP => pop(ctx),
-            .ADD, .SUB, .MUL => arithop(ctx),
-            .PRINT => print(ctx),
-            .RETURN => @"return"(ctx),
+        evalLoop: switch (ctx.ip[0].opcode) {
+            .LOAD_IMM => {
+                load_imm(ctx).verify_continue();
+                continue :evalLoop ctx.ip[0].opcode;
+            },
+            .POP => {
+                pop(ctx).verify_continue();
+                continue :evalLoop ctx.ip[0].opcode;
+            },
+            .ADD, .SUB, .MUL => {
+                arithop(ctx).verify_continue();
+                continue :evalLoop ctx.ip[0].opcode;
+            },
+            .PRINT => {
+                print(ctx).verify_continue();
+                continue :evalLoop ctx.ip[0].opcode;
+            },
+            .RETURN => {
+                const done = @"return"(ctx);        
+                if (done.return_value) |value| {
+                    return value;
+                } else {
+                    unreachable;
+                }
+            }
         };
-        if (done.return_value) |value| {
-            return value;
-        }
     }
 }
 
