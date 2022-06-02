@@ -117,6 +117,7 @@ static ScopeExpr *find_expr_scope(Scope *scope) {
             case ScopeIdSuspend:
             case ScopeIdTypeOf:
             case ScopeIdBlock:
+            case ScopeIdLabeledSwitch:
                 return nullptr;
             case ScopeIdLoop:
             case ScopeIdRuntime:
@@ -202,6 +203,16 @@ ScopeLoop *create_loop_scope(CodeGen *g, AstNode *node, Scope *parent) {
     } else {
         zig_unreachable();
     }
+    return scope;
+}
+
+ScopeLabeledSwitch *create_labeled_switch_scope(CodeGen *g, AstNode *node, Scope *parent) {
+    assert(node->type == NodeTypeSwitchExpr);
+    AstNodeSwitchExpr *switch_node = (AstNodeSwitchExpr *) node;
+    assert(switch_node->name != nullptr);
+    ScopeLabeledSwitch *scope = heap::c_allocator.create<ScopeLabeledSwitch>();
+    init_scope(g, &scope->base, ScopeIdLoop, node, parent);
+    scope->name = node->data.switch_expr.name;
     return scope;
 }
 
@@ -6562,6 +6573,7 @@ static void mark_suspension_point(Scope *scope) {
             case ScopeIdVarDecl:
             case ScopeIdDefer:
             case ScopeIdBlock:
+            case ScopeIdLabeledSwitch: // TODO?
                 looking_for_exprs = false;
                 continue;
             case ScopeIdRuntime:

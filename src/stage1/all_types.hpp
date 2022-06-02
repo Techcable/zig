@@ -2277,6 +2277,7 @@ enum ScopeId {
     ScopeIdTypeOf,
     ScopeIdExpr,
     ScopeIdNoSuspend,
+    ScopeIdLabeledSwitch,
 };
 
 struct Scope {
@@ -2432,6 +2433,23 @@ struct ScopeFnDef {
 // NodeTypeFnCallExpr
 struct ScopeTypeOf {
     Scope base;
+};
+
+
+// This scope is crated for a labled switch statement
+// It is needed to implement labeled continue.
+// NodeTypeSwitchExpr
+struct ScopeLabeledSwitch {
+    Scope base;
+
+    // The name of the switch statement.
+    //
+    // By virtue of the type, this name should never be null.
+    Buf *name;
+    // TODO: Add check this is actually used
+    //
+    // Right now this is dummy
+    bool name_used;
 };
 
 enum MemoizedBool {

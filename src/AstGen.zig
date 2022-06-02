@@ -1881,6 +1881,7 @@ fn breakExpr(parent_gz: *GenZir, parent_scope: *Scope, node: Ast.Node.Index) Inn
     }
     if (break_label != 0) {
         const label_name = try astgen.identifierTokenString(break_label);
+        @breakpoint();
         return astgen.failTok(break_label, "label not found: '{s}'", .{label_name});
     } else {
         return astgen.failNode(node, "break expression outside loop", .{});
@@ -1938,6 +1939,7 @@ fn continueExpr(parent_gz: *GenZir, parent_scope: *Scope, node: Ast.Node.Index) 
     }
     if (break_label != 0) {
         const label_name = try astgen.identifierTokenString(break_label);
+        @breakpoint();
         return astgen.failTok(break_label, "label not found: '{s}'", .{label_name});
     } else {
         return astgen.failNode(node, "continue expression outside loop", .{});

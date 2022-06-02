@@ -752,6 +752,7 @@ static ZigLLVMDIScope *get_di_scope(CodeGen *g, Scope *scope) {
         case ScopeIdRuntime:
         case ScopeIdTypeOf:
         case ScopeIdExpr:
+        case ScopeIdLabeledSwitch:
             return get_di_scope(g, scope->parent);
     }
     zig_unreachable();
@@ -4887,6 +4888,7 @@ static void render_async_var_decls(CodeGen *g, Scope *scope) {
             case ScopeIdRuntime:
             case ScopeIdTypeOf:
             case ScopeIdExpr:
+            case ScopeIdLabeledSwitch:
                 scope = scope->parent;
                 continue;
         }

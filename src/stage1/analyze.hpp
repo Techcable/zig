@@ -137,6 +137,7 @@ Scope *create_var_scope(CodeGen *g, AstNode *node, Scope *parent, ZigVar *var);
 ScopeCImport *create_cimport_scope(CodeGen *g, AstNode *node, Scope *parent);
 ScopeLoop *create_loop_scope(CodeGen *g, AstNode *node, Scope *parent);
 ScopeSuspend *create_suspend_scope(CodeGen *g, AstNode *node, Scope *parent);
+ScopeLabeledSwitch *create_labeled_switch_scope(CodeGen *g, AstNode *node, Scope *parent);
 ScopeFnDef *create_fndef_scope(CodeGen *g, AstNode *node, Scope *parent, ZigFn *fn_entry);
 Scope *create_comptime_scope(CodeGen *g, AstNode *node, Scope *parent);
 Scope *create_nosuspend_scope(CodeGen *g, AstNode *node, Scope *parent);

@@ -2920,6 +2920,7 @@ static void ir_count_defers(Stage1AstGen *ag, Scope *inner_scope, Scope *outer_s
             case ScopeIdRuntime:
             case ScopeIdTypeOf:
             case ScopeIdExpr:
+            case ScopeIdLabeledSwitch:
                 scope = scope->parent;
                 continue;
             case ScopeIdDeferExpr:
@@ -3005,6 +3006,7 @@ static bool astgen_defers_for_block(Stage1AstGen *ag, Scope *inner_scope, Scope 
             case ScopeIdRuntime:
             case ScopeIdTypeOf:
             case ScopeIdExpr:
+            case ScopeIdLabeledSwitch:
                 scope = scope->parent;
                 continue;
             case ScopeIdDeferExpr:
@@ -3262,8 +3264,25 @@ static bool is_duplicate_label(CodeGen *g, Scope *scope, AstNode *node, Buf *nam
     for (;;) {
         if (scope == nullptr || scope->id == ScopeIdFnDef) {
             break;
-        } else if (scope->id == ScopeIdBlock || scope->id == ScopeIdLoop) {
-            Buf *this_block_name = scope->id == ScopeIdBlock ? ((ScopeBlock *)scope)->name : ((ScopeLoop *)scope)->name;
+        } else if (scope->id == ScopeIdBlock || scope->id == ScopeIdLoop || scope->id == ScopeIdLabeledSwitch) {
+            Buf *this_block_name;
+            switch (scope->id) {
+                case ScopeIdBlock: {
+                    this_block_name = ((ScopeBlock *)scope)->name;
+                    break;
+                }
+                case ScopeIdLoop: {
+                    this_block_name = ((ScopeLoop *)scope)->name;
+                    break;
+                }
+                case ScopeIdLabeledSwitch: {
+                    this_block_name = ((ScopeLabeledSwitch *)scope)->name;
+                    assert(this_block_name != nullptr);
+                    break;
+                }
+                default:
+                    zig_unreachable();
+            }
             if (this_block_name != nullptr && buf_eql_buf(name, this_block_name)) {
                 ErrorMsg *msg = add_node_error(g, node, buf_sprintf("redeclaration of label '%s'", buf_ptr(name)));
                 add_error_note(g, msg, scope->source_node, buf_sprintf("previous declaration here"));
@@ -7077,8 +7096,17 @@ static Stage1ZirInst *astgen_switch_expr(Stage1AstGen *ag, Scope *scope, AstNode
     ir_build_reset_result(ag, scope, node, &peer_parent->base);
 
     // First do the else and the ranges
-    Scope *subexpr_scope = create_runtime_scope(ag->codegen, node, scope, is_comptime);
+    Scope *basic_subexpr_scope = create_runtime_scope(ag->codegen, node, scope, is_comptime);
     Scope *comptime_scope = create_comptime_scope(ag->codegen, node, scope);
+    Scope *subexpr_scope;
+    if (node->data.switch_expr.name != nullptr) {
+        // TODO: We don't (currently) support labled switch continue at comptime
+        //
+        // Ideally we would error with a descriptive message if this attempted
+        subexpr_scope = (Scope*) create_labeled_switch_scope(ag->codegen, node, basic_subexpr_scope);
+    } else {
+        subexpr_scope = basic_subexpr_scope;
+    }
     AstNode *else_prong = nullptr;
     AstNode *underscore_prong = nullptr;
     for (size_t prong_i = 0; prong_i < prong_count; prong_i += 1) {
@@ -7372,6 +7400,7 @@ static Stage1ZirInst *astgen_break(Stage1AstGen *ag, Scope *break_scope, AstNode
     for (;;) {
         if (search_scope == nullptr || search_scope->id == ScopeIdFnDef) {
             if (node->data.break_expr.name != nullptr) {
+                __builtin_debugtrap();
                 add_node_error(ag->codegen, node, buf_sprintf("label not found: '%s'", buf_ptr(node->data.break_expr.name)));
                 return ag->codegen->invalid_inst_src;
             } else {
@@ -7435,6 +7464,14 @@ static Stage1ZirInst *astgen_break(Stage1AstGen *ag, Scope *break_scope, AstNode
     return ir_build_br(ag, break_scope, node, dest_block, is_comptime);
 }
 
+
+// Code for labeled continue inside switch
+//
+// This is generally rarer, so comes after main handling for continue
+//
+// See issue #8220
+static Stage1ZirInst *astgen_continue_switch(Stage1AstGen *ag, ScopeLabeledSwitch *continue_scope, AstNode *node);
+
 static Stage1ZirInst *astgen_continue(Stage1AstGen *ag, Scope *continue_scope, AstNode *node) {
     assert(node->type == NodeTypeContinue);
 
@@ -7450,7 +7487,8 @@ static Stage1ZirInst *astgen_continue(Stage1AstGen *ag, Scope *continue_scope, A
     for (;;) {
         if (search_scope == nullptr || search_scope->id == ScopeIdFnDef) {
             if (node->data.continue_expr.name != nullptr) {
-                add_node_error(ag->codegen, node, buf_sprintf("labeled loop not found: '%s'", buf_ptr(node->data.continue_expr.name)));
+                __builtin_debugtrap();
+                add_node_error(ag->codegen, node, buf_sprintf("label not found: '%s'", buf_ptr(node->data.continue_expr.name)));
                 return ag->codegen->invalid_inst_src;
             } else {
                 add_node_error(ag->codegen, node, buf_sprintf("continue expression outside loop"));
@@ -7471,8 +7509,23 @@ static Stage1ZirInst *astgen_continue(Stage1AstGen *ag, Scope *continue_scope, A
         } else if (search_scope->id == ScopeIdRuntime) {
             ScopeRuntime *scope_runtime = (ScopeRuntime *)search_scope;
             runtime_scopes.append(scope_runtime);
+        } else if (search_scope->id == ScopeIdLabeledSwitch) {
+            ScopeLabeledSwitch *this_switch_scope = (ScopeLabeledSwitch *) search_scope;
+            assert(this_switch_scope->name != nullptr);
+            if (node->data.continue_expr.name != nullptr ||
+                buf_eql_buf(node->data.continue_expr.name, this_switch_scope->name))
+            {
+                // switch to seperate handling function
+                return astgen_continue_switch(ag, this_switch_scope, node);;
+            }
         }
         search_scope = search_scope->parent;
+    }
+
+    // TODO: Test this?
+    if (node->data.continue_expr.expr != nullptr) {
+        add_node_error(ag->codegen, node, buf_sprintf("continue cannot accept expressions for loops"));
+        return ag->codegen->invalid_inst_src;
     }
 
     Stage1ZirInst *is_comptime;
@@ -7492,6 +7545,14 @@ static Stage1ZirInst *astgen_continue(Stage1AstGen *ag, Scope *continue_scope, A
     if (!astgen_defers_for_block(ag, continue_scope, dest_block->scope, nullptr, nullptr))
         return ag->codegen->invalid_inst_src;
     return ir_build_br(ag, continue_scope, node, dest_block, is_comptime);
+}
+
+static Stage1ZirInst *astgen_continue_switch(Stage1AstGen *ag, ScopeLabeledSwitch *switch_scope, AstNode *node) {
+    assert(node->type == NodeTypeContinue);
+    assert(switch_scope->name != nullptr);
+    switch_scope->name_used = true;
+    add_node_error(ag->codegen, node, buf_sprintf("TODO: labeled continue inside switch"));
+    return ag->codegen->invalid_inst_src;;
 }
 
 static Stage1ZirInst *astgen_error_type(Stage1AstGen *ag, Scope *scope, AstNode *node) {
