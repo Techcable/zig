@@ -377,6 +377,8 @@ pub fn firstToken(tree: Ast, node: Node.Index) TokenIndex {
         .@"try",
         .@"await",
         .optional_type,
+        .@"switch",
+        .switch_comma,
         .if_simple,
         .@"if",
         .@"suspend",
@@ -654,18 +656,18 @@ pub fn firstToken(tree: Ast, node: Node.Index) TokenIndex {
             }
             return result - end_offset;
         },
-        // Must include here, because .switch_comma is handled in render
+        // Must include labeled_switch_comma here,
+        // because .switch_comma is handled in render
         //
         // This could trigger a bug with missing newline
-        .switch_comma, .@"switch" => {
+        .labeled_switch, .labeled_switch_comma => {
             // Look for a label (no `inline` keyword)
             const main_token = main_tokens[n];
             var result = main_token;
 
             assert(token_tags[main_token] == .keyword_switch);
-            if (token_tags[result - 1] == .colon) {
-                result -= 2;
-            }
+            assert(token_tags[result - 1] == .colon);
+            result -= 2;
             return result - end_offset;
         },
     };
@@ -819,7 +821,8 @@ pub fn lastToken(tree: Ast, node: Node.Index) TokenIndex {
             assert(params.end > params.start);
             n = tree.extra_data[params.end - 1]; // last parameter
         },
-        .@"switch" => {
+        .@"switch", .labeled_switch => {
+            // NOTE: Label doesn't affect end
             const cases = tree.extraData(datas[n].rhs, Node.SubRange);
 
             if (cases.end - cases.start == 0) {
@@ -856,7 +859,9 @@ pub fn lastToken(tree: Ast, node: Node.Index) TokenIndex {
         .struct_init_comma,
         .container_decl_arg_trailing,
         .switch_comma,
+        .labeled_switch_comma,
         => {
+            // NOTE: Label is irreleant since this is end token
             const members = tree.extraData(datas[n].rhs, Node.SubRange);
             assert(members.end - members.start > 0);
             end_offset += 2; // for the comma + rbrace
@@ -2835,6 +2840,17 @@ pub const Node = struct {
         /// Same as switch except there is known to be a trailing comma
         /// before the final rbrace
         switch_comma,
+        /// `foo: switch(lhs) {}`. `SubRange[rhs]`.
+        ///
+        /// Must be seperated out from regular .@"switch"
+        /// to avoid ambiguity with type expressions
+        ///
+        /// For example, in the old approach `fn(a: switch (foo) { ... })`
+        /// would parse as a switch expression with a label.
+        labeled_switch,
+        /// Same as labled_switch except there is known to be a trailing comma
+        /// before the final rbrace
+        labeled_switch_comma,
         /// `lhs => rhs`. If lhs is omitted it means `else`.
         /// main_token is the `=>`
         switch_case_one,

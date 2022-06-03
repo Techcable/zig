@@ -1089,7 +1089,9 @@ const Parser = struct {
         if (loop_stmt != 0) return loop_stmt;
 
         if (p.token_tags[p.tok_i] == .keyword_switch) {
-            const switch_expr = try p.expectSwitchExpr();
+            const switch_expr = try p.expectSwitchExpr(
+                if (label_token != 0) .labeled else .expression,
+            );
             assert(switch_expr != 0);
             return switch_expr;
         }
@@ -2201,7 +2203,7 @@ const Parser = struct {
     }
 
     /// ErrorUnionExpr <- SuffixExpr (EXCLAMATIONMARK TypeExpr)?
-    fn parseErrorUnionExpr(p: *Parser) !Node.Index {
+    fn parseErrorUnionExpr(p: *Parser) Error!Node.Index {
         const suffix_expr = try p.parseSuffixExpr();
         if (suffix_expr == 0) return null_node;
         const bang = p.eatToken(.bang) orelse return suffix_expr;
@@ -2426,7 +2428,7 @@ const Parser = struct {
             .builtin => return p.parseBuiltinCall(),
             .keyword_fn => return p.parseFnProto(),
             .keyword_if => return p.parseIf(expectTypeExpr),
-            .keyword_switch => return p.expectSwitchExpr(),
+            .keyword_switch => return p.expectSwitchExpr(.expression),
 
             .keyword_extern,
             .keyword_packed,
@@ -2790,8 +2792,24 @@ const Parser = struct {
         });
     }
 
+    /// The style of a switch expression (whether labeled or not)
+    const SwitchStyle = enum(u8) {
+        expression = 0,
+        labeled = 1,
+
+        pub fn tag(self: SwitchStyle, trailing_comma: bool) Ast.Node.Tag {
+            const TABLE: [4]Ast.Node.Tag = .{
+                .@"switch",
+                .switch_comma,
+                .labeled_switch,
+                .labeled_switch_comma,
+            };
+            return TABLE[@enumToInt(self) * 2 + @boolToInt(trailing_comma)];
+        }
+    };
+
     /// SwitchExpr <- KEYWORD_switch LPAREN Expr RPAREN LBRACE SwitchProngList RBRACE
-    fn expectSwitchExpr(p: *Parser) !Node.Index {
+    fn expectSwitchExpr(p: *Parser, style: SwitchStyle) !Node.Index {
         const switch_token = p.assertToken(.keyword_switch);
         _ = try p.expectToken(.l_paren);
         const expr_node = try p.expectExpr();
@@ -2800,9 +2818,8 @@ const Parser = struct {
         const cases = try p.parseSwitchProngList();
         const trailing_comma = p.token_tags[p.tok_i - 1] == .comma;
         _ = try p.expectToken(.r_brace);
-
         return p.addNode(.{
-            .tag = if (trailing_comma) .switch_comma else .@"switch",
+            .tag = style.tag(trailing_comma),
             .main_token = switch_token,
             .data = .{
                 .lhs = expr_node,

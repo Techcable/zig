@@ -651,6 +651,8 @@ fn renderExpression(gpa: Allocator, ais: *Ais, tree: Ast, node: Ast.Node.Index, 
 
         .@"switch",
         .switch_comma,
+        .labeled_switch,
+        .labeled_switch_comma,
         => {
             const switch_token = main_tokens[node];
             const condition = datas[node].lhs;
@@ -658,12 +660,18 @@ fn renderExpression(gpa: Allocator, ais: *Ais, tree: Ast, node: Ast.Node.Index, 
             const cases = tree.extra_data[extra.start..extra.end];
             const rparen = tree.lastToken(condition) + 1;
 
-            if (token_tags[switch_token - 1] == .colon and
-                token_tags[switch_token - 2] == .identifier)
-            {
+            const expect_labeled = switch (node_tags[node]) {
+                .@"switch", .switch_comma => false,
+                .labeled_switch, .labeled_switch_comma => true,
+                else => unreachable,
+            };
+
+            if (expect_labeled) {
+                assert(token_tags[switch_token - 2] == .identifier);
+                assert(token_tags[switch_token - 1] == .colon);
                 assert(tree.firstToken(node) < switch_token);
-                try renderToken(ais, tree, switch_token - 2, .none); // name
-                try renderToken(ais, tree, switch_token - 1, .space); // colon
+                try renderToken(ais, tree, switch_token - 2, .none);
+                try renderToken(ais, tree, switch_token - 1, .space);
             }
             try renderToken(ais, tree, switch_token, .space); // switch keyword
             try renderToken(ais, tree, switch_token + 1, .none); // lparen
