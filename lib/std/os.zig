@@ -1757,16 +1757,33 @@ pub const Arg0Expand = enum {
     no_expand,
 };
 
+comptime {
+    if (@import("builtin").mode != .Debug) {
+        std.debug.todo("Avoid ArgvExpandHelper workaround");
+    }
+}
+
+// workaround for switch not parsing correctly as type expr
+//
+// ideally would go back to old version
+fn ArgvExpandHelper(comptime arg0_expand: Arg0Expand) type {
+    return switch (arg0_expand) {
+        .expand => [*:null]?[*:0]const u8,
+        .no_expand => [*:null]const ?[*:0]const u8,
+    };
+}
+
 /// Like `execvpeZ` except if `arg0_expand` is `.expand`, then `argv` is mutable,
 /// and `argv[0]` is expanded to be the same absolute path that is passed to the execve syscall.
 /// If this function returns with an error, `argv[0]` will be restored to the value it was when it was passed in.
 pub fn execvpeZ_expandArg0(
     comptime arg0_expand: Arg0Expand,
     file: [*:0]const u8,
-    child_argv: switch (arg0_expand) {
-        .expand => [*:null]?[*:0]const u8,
-        .no_expand => [*:null]const ?[*:0]const u8,
-    },
+    // child_argv: switch (arg0_expand) {
+    //    .expand => [*:null]?[*:0]const u8,
+    //    .no_expand => [*:null]const ?[*:0]const u8,
+    // }
+    child_argv: ArgvExpandHelper(arg0_expand),
     envp: [*:null]const ?[*:0]const u8,
 ) ExecveError {
     const file_slice = mem.sliceTo(file, 0);
