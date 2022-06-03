@@ -7400,7 +7400,7 @@ static Stage1ZirInst *astgen_break(Stage1AstGen *ag, Scope *break_scope, AstNode
     for (;;) {
         if (search_scope == nullptr || search_scope->id == ScopeIdFnDef) {
             if (node->data.break_expr.name != nullptr) {
-                __builtin_debugtrap();
+                BREAKPOINT;
                 add_node_error(ag->codegen, node, buf_sprintf("label not found: '%s'", buf_ptr(node->data.break_expr.name)));
                 return ag->codegen->invalid_inst_src;
             } else {
@@ -7487,7 +7487,7 @@ static Stage1ZirInst *astgen_continue(Stage1AstGen *ag, Scope *continue_scope, A
     for (;;) {
         if (search_scope == nullptr || search_scope->id == ScopeIdFnDef) {
             if (node->data.continue_expr.name != nullptr) {
-                __builtin_debugtrap();
+                BREAKPOINT;
                 add_node_error(ag->codegen, node, buf_sprintf("label not found: '%s'", buf_ptr(node->data.continue_expr.name)));
                 return ag->codegen->invalid_inst_src;
             } else {
