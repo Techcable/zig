@@ -486,6 +486,8 @@ fn lvalExpr(gz: *GenZir, scope: *Scope, node: Ast.Node.Index) InnerError!Zir.Ins
         .struct_init_comma,
         .@"switch",
         .switch_comma,
+        .labeled_switch,
+        .labeled_switch_comma,
         .@"for",
         .for_simple,
         .@"suspend",
@@ -974,7 +976,11 @@ fn expr(gz: *GenZir, scope: *Scope, rl: ResultLoc, node: Ast.Node.Index) InnerEr
         .error_set_decl => return errorSetDecl(gz, rl, node),
         .array_access => return arrayAccess(gz, scope, rl, node),
         .@"comptime" => return comptimeExprAst(gz, scope, rl, node),
-        .@"switch", .switch_comma => return switchExpr(gz, scope, rl.br(), node),
+        .@"switch",
+        .switch_comma,
+        .labeled_switch,
+        .labeled_switch_comma,
+        => return switchExpr(gz, scope, rl.br(), node),
 
         .@"nosuspend" => return nosuspendExpr(gz, scope, rl, node),
         .@"suspend" => return suspendExpr(gz, scope, node),
@@ -1872,6 +1878,17 @@ fn breakExpr(parent_gz: *GenZir, parent_scope: *Scope, node: Ast.Node.Index) Inn
                 }
                 return Zir.Inst.Ref.unreachable_value;
             },
+            .labeled_switch => {
+                const labeled_switch = scope.cast(Scope.LabeledSwitch).?;
+                if (break_label != 0 and (try astgen.tokenIdentEql(
+                    labeled_switch.label_token,
+                    break_label,
+                ))) {
+                    return astgen.failNode(break_label, "Cannot use break with labeled switch", .{});
+                } else {
+                    scope = labeled_switch.parent;
+                }
+            },
             .local_val => scope = scope.cast(Scope.LocalVal).?.parent,
             .local_ptr => scope = scope.cast(Scope.LocalPtr).?.parent,
             .namespace => break,
@@ -1888,11 +1905,13 @@ fn breakExpr(parent_gz: *GenZir, parent_scope: *Scope, node: Ast.Node.Index) Inn
     }
 }
 
+// TODO: Unify with breakExpr?
 fn continueExpr(parent_gz: *GenZir, parent_scope: *Scope, node: Ast.Node.Index) InnerError!Zir.Inst.Ref {
     const astgen = parent_gz.astgen;
     const tree = astgen.tree;
     const node_datas = tree.nodes.items(.data);
     const break_label = node_datas[node].lhs;
+    const rhs = node_datas[node].rhs;
 
     // Look for the label in the scope.
     var scope = parent_scope;
@@ -1917,11 +1936,41 @@ fn continueExpr(parent_gz: *GenZir, parent_scope: *Scope, node: Ast.Node.Index) 
                     continue;
                 }
 
+                if (rhs != 0) {
+                    return astgen.failNode(rhs, "loop continue can't have expression", .{});
+                }
+
                 const break_tag: Zir.Inst.Tag = if (gen_zir.is_inline or gen_zir.force_comptime)
                     .break_inline
                 else
                     .@"break";
                 _ = try parent_gz.addBreak(break_tag, continue_block, .void_value);
+                return Zir.Inst.Ref.unreachable_value;
+            },
+            .labeled_switch => {
+                const labeled_switch = scope.cast(Scope.LabeledSwitch).?;
+                if (break_label == 0 or !(try astgen.tokenIdentEql(
+                    labeled_switch.label_token,
+                    break_label,
+                ))) {
+                    // no match
+                    scope = labeled_switch.parent;
+                    continue;
+                }
+                // we found a match.
+
+                // TODO: Actually implement this (or give a proper error).
+                //
+                // Can't error or panic, because stage1 *does* implement this
+                //
+                // Instead we (try) to use an unreachable expression
+                return parent_gz.add(.{
+                    .tag = .@"unreachable",
+                    .data = .{ .@"unreachable" = .{
+                        .src_node = parent_gz.nodeIndexToRelative(node),
+                        .force_comptime = false,
+                    } },
+                });
                 return Zir.Inst.Ref.unreachable_value;
             },
             .local_val => scope = scope.cast(Scope.LocalVal).?.parent,
@@ -1981,19 +2030,18 @@ fn checkLabelRedefinition(astgen: *AstGen, parent_scope: *Scope, label: Ast.Toke
                 const gen_zir = scope.cast(GenZir).?;
                 if (gen_zir.label) |prev_label| {
                     if (try astgen.tokenIdentEql(label, prev_label.token)) {
-                        const label_name = try astgen.identifierTokenString(label);
-                        return astgen.failTokNotes(label, "redefinition of label '{s}'", .{
-                            label_name,
-                        }, &[_]u32{
-                            try astgen.errNoteTok(
-                                prev_label.token,
-                                "previous definition here",
-                                .{},
-                            ),
-                        });
+                        return failLabelRedefinition(astgen, label, prev_label.token);
                     }
                 }
                 scope = gen_zir.parent;
+            },
+            .labeled_switch => {
+                const labeled_switch = scope.cast(Scope.LabeledSwitch).?;
+                const prev_label = labeled_switch.label_token;
+                if (try astgen.tokenIdentEql(label, prev_label)) {
+                    return failLabelRedefinition(astgen, label, prev_label);
+                }
+                scope = labeled_switch.parent;
             },
             .local_val => scope = scope.cast(Scope.LocalVal).?.parent,
             .local_ptr => scope = scope.cast(Scope.LocalPtr).?.parent,
@@ -2002,6 +2050,20 @@ fn checkLabelRedefinition(astgen: *AstGen, parent_scope: *Scope, label: Ast.Toke
             .top => unreachable,
         }
     }
+}
+
+// Helper function for checkLabelRedefinition
+fn failLabelRedefinition(astgen: *AstGen, label: Ast.TokenIndex, prev_label: Ast.TokenIndex) InnerError {
+    const label_name = try astgen.identifierTokenString(label);
+    return astgen.failTokNotes(label, "redefinition of label '{s}'", .{
+        label_name,
+    }, &[_]u32{
+        try astgen.errNoteTok(
+            prev_label,
+            "previous definition here",
+            .{},
+        ),
+    });
 }
 
 fn labeledBlockExpr(
@@ -2522,6 +2584,7 @@ fn countDefers(astgen: *AstGen, outer_scope: *Scope, inner_scope: *Scope) struct
     while (scope != outer_scope) {
         switch (scope.tag) {
             .gen_zir => scope = scope.cast(GenZir).?.parent,
+            .labeled_switch => scope = scope.cast(Scope.LabeledSwitch).?.parent,
             .local_val => scope = scope.cast(Scope.LocalVal).?.parent,
             .local_ptr => scope = scope.cast(Scope.LocalPtr).?.parent,
             .defer_normal => {
@@ -2573,6 +2636,7 @@ fn genDefers(
             .gen_zir => scope = scope.cast(GenZir).?.parent,
             .local_val => scope = scope.cast(Scope.LocalVal).?.parent,
             .local_ptr => scope = scope.cast(Scope.LocalPtr).?.parent,
+            .labeled_switch => scope = scope.cast(Scope.LabeledSwitch).?.parent,
             .defer_normal => {
                 const defer_scope = scope.cast(Scope.Defer).?;
                 scope = defer_scope.parent;
@@ -2637,6 +2701,7 @@ fn checkUsed(
     while (scope != outer_scope) {
         switch (scope.tag) {
             .gen_zir => scope = scope.cast(GenZir).?.parent,
+            .labeled_switch => scope = scope.cast(Scope.LabeledSwitch).?.parent,
             .local_val => {
                 const s = scope.cast(Scope.LocalVal).?;
                 if (!s.used) {
@@ -3993,6 +4058,8 @@ fn testDecl(
             var capturing_namespace: ?*Scope.Namespace = null;
             while (true) switch (s.tag) {
                 .local_val, .local_ptr => unreachable, // a test cannot be in a local scope
+                // TODO: Can tests be inside "labeled switches"?
+                .labeled_switch => s = s.cast(Scope.LabeledSwitch).?.parent,
                 .gen_zir => s = s.cast(GenZir).?.parent,
                 .defer_normal, .defer_error => s = s.cast(Scope.Defer).?.parent,
                 .namespace => {
@@ -5971,7 +6038,7 @@ fn forExpr(
 
 fn switchExpr(
     parent_gz: *GenZir,
-    scope: *Scope,
+    root_scope: *Scope,
     rl: ResultLoc,
     switch_node: Ast.Node.Index,
 ) InnerError!Zir.Inst.Ref {
@@ -5985,6 +6052,29 @@ fn switchExpr(
     const operand_node = node_datas[switch_node].lhs;
     const extra = tree.extraData(node_datas[switch_node].rhs, Ast.Node.SubRange);
     const case_nodes = tree.extra_data[extra.start..extra.end];
+
+    const switch_label = detectSwitchLabel: {
+        const main_switch_token = main_tokens[switch_node];
+        if (token_tags[main_switch_token - 1] == .colon) {
+            const label_token = main_switch_token - 2;
+            assert(token_tags[label_token] == .identifier);
+            try astgen.checkLabelRedefinition(root_scope, label_token);
+            break :detectSwitchLabel label_token;
+        } else {
+            break :detectSwitchLabel null;
+        }
+    };
+    // If we have a switch_label, then everything that follows is
+    // wrapped in a LabeledSwitch
+    var raw_switch_scope_buf: Scope.LabeledSwitch = undefined;
+    const scope = if (switch_label) |label_token| initSwitchScope: {
+        raw_switch_scope_buf = .{
+            .parent = root_scope,
+            .label_token = label_token,
+        };
+        break :initSwitchScope @ptrCast(*Scope, &raw_switch_scope_buf);
+    } else root_scope;
+    const switch_scope = scope.cast(Scope.LabeledSwitch);
 
     // We perform two passes over the AST. This first pass is to collect information
     // for the following variables, make note of the special prong AST node index,
@@ -6127,6 +6217,10 @@ fn switchExpr(
     // We re-use this same scope for all cases, including the special prong, if any.
     var case_scope = parent_gz.makeSubBlock(&block_scope.base);
     case_scope.instructions_top = GenZir.unstacked_top;
+
+    if (switch_scope) |labeled_scope| {
+        labeled_scope.case_scope = &case_scope;
+    }
 
     // In this pass we generate all the item and prong expressions.
     var multi_case_index: u32 = 0;
@@ -6302,6 +6396,12 @@ fn switchExpr(
     const zir_tags = astgen.instructions.items(.tag);
 
     zir_datas[switch_block].pl_node.payload_index = payload_index;
+
+    if (case_scope.label) |some| {
+        if (!some.used) {
+            try astgen.appendErrorTok(some.token, "unused switch label", .{});
+        }
+    }
 
     const strat = rl.strategy(&block_scope);
     for (payloads.items[case_table_start..case_table_end]) |start_index, i| {
@@ -6630,6 +6730,7 @@ fn localVarRef(
             }
             s = local_ptr.parent;
         },
+        .labeled_switch => s = s.cast(Scope.LabeledSwitch).?.parent,
         .gen_zir => s = s.cast(GenZir).?.parent,
         .defer_normal, .defer_error => s = s.cast(Scope.Defer).?.parent,
         .namespace => {
@@ -7239,6 +7340,7 @@ fn builtinCall(
                             }
                             s = local_ptr.parent;
                         },
+                        .labeled_switch => s = s.cast(Scope.LabeledSwitch).?.parent,
                         .gen_zir => s = s.cast(GenZir).?.parent,
                         .defer_normal, .defer_error => s = s.cast(Scope.Defer).?.parent,
                         .namespace => {
@@ -8267,6 +8369,8 @@ fn nodeMayNeedMemoryLocation(tree: *const Ast, start_node: Ast.Node.Index, have_
             .@"for", // This variant always has an else expression.
             .@"switch",
             .switch_comma,
+            .labeled_switch,
+            .labeled_switch_comma,
             .call_one,
             .call_one_comma,
             .async_call_one,
@@ -8360,6 +8464,8 @@ fn nodeMayEvalToError(tree: *const Ast, start_node: Ast.Node.Index) BuiltinFn.Ev
             .@"for",
             .@"switch",
             .switch_comma,
+            .labeled_switch,
+            .labeled_switch_comma,
             .call_one,
             .call_one_comma,
             .async_call_one,
@@ -8678,6 +8784,8 @@ fn nodeImpliesMoreThanOnePossibleValue(tree: *const Ast, start_node: Ast.Node.In
             .@"for",
             .@"switch",
             .switch_comma,
+            .labeled_switch,
+            .labeled_switch_comma,
             .call_one,
             .call_one_comma,
             .async_call_one,
@@ -8920,6 +9028,8 @@ fn nodeImpliesComptimeOnly(tree: *const Ast, start_node: Ast.Node.Index) bool {
             .@"for",
             .@"switch",
             .switch_comma,
+            .labeled_switch,
+            .labeled_switch_comma,
             .call_one,
             .call_one_comma,
             .async_call_one,
@@ -9662,6 +9772,7 @@ const Scope = struct {
         defer_error,
         namespace,
         top,
+        labeled_switch,
     };
 
     /// The category of identifier. These tag names are user-visible in compile errors.
@@ -9751,6 +9862,35 @@ const Scope = struct {
             self.captures.deinit(gpa);
             self.* = undefined;
         }
+    };
+
+    /// Used for labeled continue in switch statements,
+    ///
+    /// This effectively allows state machines/comptued goto.
+    /// See issue #8220
+    ///
+    /// This preserves some state beyond what `GenZir` usually preserves.
+    ///
+    /// Correct handling of the underlying constructcan be difficult.
+    ///
+    /// See here for LLVM blogpost on implementing indirectbr:
+    /// https://blog.llvm.org/2010/01/address-of-label-and-indirect-branches.html
+    const LabeledSwitch = struct {
+        const base_tag: Tag = .labeled_switch;
+        base: Scope = Scope{ .tag = base_tag },
+        /// Note unlike `GenZir.label`,
+        /// we just only track token not target block
+        ///
+        /// It doesn't really make sense to have a "target block"
+        /// because that is only known at runtime.
+        label_token: Ast.TokenIndex,
+
+        parent: *Scope,
+        /// The scope for the body of the cases
+        case_scope: ?*GenZir = null,
+        /// The primary index o the switch block
+        /// Whether or not the label is used
+        used: bool = false,
     };
 
     const Top = struct {
@@ -11212,6 +11352,7 @@ fn detectLocalShadowing(
                 try astgen.errNoteNode(decl_node, "declared here", .{}),
             });
         },
+        .labeled_switch => s = s.cast(Scope.LabeledSwitch).?.parent,
         .gen_zir => s = s.cast(GenZir).?.parent,
         .defer_normal, .defer_error => s = s.cast(Scope.Defer).?.parent,
         .top => break,
