@@ -211,7 +211,7 @@ ScopeLabeledSwitch *create_labeled_switch_scope(CodeGen *g, AstNode *node, Scope
     AstNodeSwitchExpr *switch_node = (AstNodeSwitchExpr *) node;
     assert(switch_node->name != nullptr);
     ScopeLabeledSwitch *scope = heap::c_allocator.create<ScopeLabeledSwitch>();
-    init_scope(g, &scope->base, ScopeIdLoop, node, parent);
+    init_scope(g, &scope->base, ScopeIdLabeledSwitch, node, parent);
     scope->name = node->data.switch_expr.name;
     return scope;
 }
