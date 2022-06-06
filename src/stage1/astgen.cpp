@@ -7551,8 +7551,8 @@ static Stage1ZirInst *astgen_continue_switch(Stage1AstGen *ag, ScopeLabeledSwitc
     assert(node->type == NodeTypeContinue);
     assert(switch_scope->name != nullptr);
     switch_scope->name_used = true;
-    add_node_error(ag->codegen, node, buf_sprintf("TODO: labeled continue inside switch"));
-    return ag->codegen->invalid_inst_src;;
+    // TODO: labeled continue inside switch
+    return ir_build_unreachable(ag, (Scope*) switch_scope, node);
 }
 
 static Stage1ZirInst *astgen_error_type(Stage1AstGen *ag, Scope *scope, AstNode *node) {
