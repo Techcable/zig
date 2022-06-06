@@ -1758,7 +1758,7 @@ pub const Arg0Expand = enum {
 };
 
 comptime {
-    if (@import("builtin").mode != .Debug) {
+    if (@import("builtin").mode != .Debug and @import("builtin").zig_backend != .stage1) {
         std.debug.todo("Avoid ArgvExpandHelper workaround");
     }
 }
