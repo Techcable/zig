@@ -18,11 +18,7 @@ enum opcode {
     OP_PRINT = 3,
     OP_POP = 4,
     OP_RETURN_VALUE = 5,
-    // $EXPAND: extra_opcodes(start=6) 
 };
-#ifndef NUM_OPCODES
-#define NUM_OPCODES 6
-#endif
 
 int interpret_traditional(const uint16_t *ip) {
     int entire_stack[16];
@@ -70,7 +66,6 @@ int interpret_traditional(const uint16_t *ip) {
                 int val = *--stack;
                 return val;
             }
-            // $EXPAND: extra_evals(mode='case')
             default: {
                 fprintf(stderr, "Illegal insn: %d", (*ip & 0xFF));
                 abort();
@@ -100,7 +95,6 @@ int interpret_nested_switch(const uint16_t *ip) {
                 case OP_PRINT: goto print; \
                 case OP_POP: goto pop; \
                 case OP_RETURN_VALUE: goto return_value; \
-                // $EXPAND: extra_nested_switch()
                 default: goto illegal_insn; \
             } \
         } while(false)
@@ -139,7 +133,6 @@ int interpret_nested_switch(const uint16_t *ip) {
             fprintf(stderr, "Illegal insn: %d", (*ip & 0xFF));
             abort();
         }
-        // $EXPAND: extra_evals(mode='goto')
     }
     #undef DISPATCH_DIRECT
     #undef DISPATCH
@@ -149,14 +142,15 @@ int interpret(const uint16_t *ip) {
     int entire_stack[16];
     int *stack = &entire_stack[0];
     int oparg;
-    static void *table[NUM_OPCODES] = {
+    static void *table[8] = {
         &&push,
         &&push_neg,
         &&add,
         &&print,
         &&pop,
         &&return_value,
-        // $EXPAND: extra_jump_table()
+        &&illegal_insn,
+        &&illegal_insn,
     };
     #define DISPATCH() do { \
             ip += 1; \
@@ -202,7 +196,6 @@ int interpret(const uint16_t *ip) {
             fprintf(stderr, "Illegal insn: %d", (*ip & 0xFF));
             abort();
         }
-        // $EXPAND: extra_evals(mode='goto')
     }
     #undef DISPATCH_DIRECT
     #undef DISPATCH
