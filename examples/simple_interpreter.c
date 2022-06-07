@@ -3,7 +3,13 @@
 #include <stdio.h>
 #include <assert.h>
 #include <stdlib.h>
+#include <stdbool.h>
 
+#ifdef TRACE_ENABLED
+#define TRACE(msg, ...) fprintf(stderr, "TRACE: " msg "\n", ##__VA_ARGS__)
+#else
+#define TRACE(msg, ...) do {} while(false)
+#endif
 
 enum opcode {
     OP_PUSH = 0,
@@ -14,7 +20,7 @@ enum opcode {
     OP_RETURN_VALUE = 5,
 };
 
-int interpret_traditional(const uint8_t *ip) {
+int interpret_traditional(const uint16_t *ip) {
     int entire_stack[16];
     int *stack = &entire_stack[0];
     int oparg, opcode;
@@ -25,7 +31,7 @@ int interpret_traditional(const uint8_t *ip) {
         } while(false)
     #define DECODE() do { \
             opcode = *ip & 0xFF; \
-            oparg = (uint8_t) *ip >> 4; \
+            oparg = (uint8_t) (*ip >> 8); \
         } while(false)
     DECODE(); // initial
     while (true) {
@@ -33,6 +39,7 @@ int interpret_traditional(const uint8_t *ip) {
         switch (opcode) {
             case OP_PUSH:
                 assert(oparg >= 0);
+                TRACE("push: %d", oparg);
                 *stack++ = oparg;
                 DISPATCH();
             case OP_PUSH_NEG:
@@ -42,6 +49,7 @@ int interpret_traditional(const uint8_t *ip) {
             case OP_ADD: {
                 int a = *--stack;
                 int b = *--stack;
+                TRACE("add: %d + %d", a, b);
                 *stack++ = a + b;
                 DISPATCH();
             }
@@ -68,7 +76,7 @@ int interpret_traditional(const uint8_t *ip) {
     #undef DECODE
 }
 
-int interpret(const uint8_t *ip) {
+int interpret(const uint16_t *ip) {
     int entire_stack[16];
     int *stack = &entire_stack[0];
     int oparg;
@@ -87,14 +95,15 @@ int interpret(const uint8_t *ip) {
             DISPATCH_DIRECT(); \
         } while(false)
     #define DISPATCH_DIRECT() do { \
-            char opcode = *ip & 0xFF; \
-            oparg = (uint8_t) *ip >> 4; \
+            int opcode = *ip & 0xFF; \
+            oparg = (uint8_t) (*ip >> 8); \
             goto *table[opcode]; \
         } while(false)
     DISPATCH_DIRECT(); // begin dispatch loop
     while (true) {
         push:
             assert(oparg >= 0);
+            TRACE("push: %d", oparg);
             *stack++ = oparg;
             DISPATCH();
         push_neg:
@@ -104,6 +113,7 @@ int interpret(const uint8_t *ip) {
         add: {
             int a = *--stack;
             int b = *--stack;
+            TRACE("add: %d + %d", a, b);
             *stack++ = a + b;
             DISPATCH();
         }
@@ -127,8 +137,8 @@ int interpret(const uint8_t *ip) {
     }
 }
 
-#define BC(op, oparg) ((uint8_t) (((enum opcode) op) | (oparg << 4)))
-const uint8_t SAMPLE_BYTECODE[6] = {
+#define BC(op, oparg) (((uint16_t) op) | ((uint16_t) oparg) << 8)
+const uint16_t SAMPLE_BYTECODE[6] = {
     BC(OP_PUSH, 2),
     BC(OP_PUSH, 40),
     BC(OP_ADD, 0),
@@ -139,8 +149,8 @@ const uint8_t SAMPLE_BYTECODE[6] = {
 };
 
 int main(int argc, char** argv) {
-    int res = interpret(&SAMPLE_BYTECODE[0]);
     int res2 = interpret_traditional(&SAMPLE_BYTECODE[0]);
+    int res = interpret(&SAMPLE_BYTECODE[0]);
 
     return res != 0;
 }
