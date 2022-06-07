@@ -76,6 +76,68 @@ int interpret_traditional(const uint16_t *ip) {
     #undef DECODE
 }
 
+
+int interpret_nested_switch(const uint16_t *ip) {
+    int entire_stack[16];
+    int *stack = &entire_stack[0];
+    int oparg;
+    #define DISPATCH() do { \
+            ip += 1; \
+            DISPATCH_DIRECT(); \
+        } while(false)
+    #define DISPATCH_DIRECT() do { \
+            int opcode = *ip & 0xFF; \
+            oparg = (uint8_t) (*ip >> 8); \
+            switch (opcode & 0xF) { \
+                case OP_PUSH: goto push; \
+                case OP_PUSH_NEG: goto push_neg; \
+                case OP_ADD: goto add; \
+                case OP_PRINT: goto print; \
+                case OP_POP: goto pop; \
+                case OP_RETURN_VALUE: goto return_value; \
+                default: goto illegal_insn; \
+            } \
+        } while(false)
+    DISPATCH_DIRECT(); // begin dispatch loop
+    while (true) {
+        push:
+            assert(oparg >= 0);
+            TRACE("push: %d", oparg);
+            *stack++ = oparg;
+            DISPATCH();
+        push_neg:
+            assert(oparg >= 0);
+            *stack++ = -oparg;
+            DISPATCH();
+        add: {
+            int a = *--stack;
+            int b = *--stack;
+            TRACE("add: %d + %d", a, b);
+            *stack++ = a + b;
+            DISPATCH();
+        }
+        print: {
+            int val = *--stack;
+            printf("%d\n", val);
+            DISPATCH();
+        }
+        pop: {
+            stack -= 1;
+            DISPATCH();
+        }
+        return_value: {
+            int val = *--stack;
+            return val;
+        }
+        illegal_insn: {
+            fprintf(stderr, "Illegal insn: %d", (*ip & 0xFF));
+            abort();
+        }
+    }
+    #undef DISPATCH_DIRECT
+    #undef DISPATCH
+}
+
 int interpret(const uint16_t *ip) {
     int entire_stack[16];
     int *stack = &entire_stack[0];
@@ -135,6 +197,8 @@ int interpret(const uint16_t *ip) {
             abort();
         }
     }
+    #undef DISPATCH_DIRECT
+    #undef DISPATCH
 }
 
 #define BC(op, oparg) (((uint16_t) op) | ((uint16_t) oparg) << 8)
@@ -149,8 +213,9 @@ const uint16_t SAMPLE_BYTECODE[6] = {
 };
 
 int main(int argc, char** argv) {
-    int res2 = interpret_traditional(&SAMPLE_BYTECODE[0]);
-    int res = interpret(&SAMPLE_BYTECODE[0]);
+    interpret_traditional(&SAMPLE_BYTECODE[0]);
+    interpret_nested_switch(&SAMPLE_BYTECODE[0]);
+    interpret(&SAMPLE_BYTECODE[0]);
 
-    return res != 0;
+    return 0;
 }
