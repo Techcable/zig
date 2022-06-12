@@ -9870,7 +9870,13 @@ const Scope = struct {
     ///
     /// This preserves some state beyond what `GenZir` usually preserves.
     ///
-    /// Correct handling of the underlying constructcan be difficult.
+    /// The reason I added this scope is
+    /// essentially that labeled switch implies the
+    /// ability to loop.
+    ///
+    /// At this point I am very unsure about the percise AST -> ZIR translation.
+    ///
+    /// Correct lowering of the underlying `indirectbr` can also be difficult.
     ///
     /// See here for LLVM blogpost on implementing indirectbr:
     /// https://blog.llvm.org/2010/01/address-of-label-and-indirect-branches.html
