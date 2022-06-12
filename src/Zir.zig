@@ -2889,7 +2889,13 @@ pub const Inst = struct {
         /// that is useful for the case items, but cannot be used for capture values.
         /// For the capture values, Sema is expected to find the operand of this operand
         /// and use that.
-        operand: Ref,
+        ///
+        /// If this is a labeled switch block (and it has a labeled continue),
+        /// then the runtime value of the expression may actually come from a
+        /// different place.
+        ///
+        /// However the type still must match!!.
+        main_operand: Ref,
         bits: Bits,
 
         pub const Bits = packed struct {
@@ -2902,9 +2908,14 @@ pub const Inst = struct {
             /// If true, the `operand` is a pointer to the value being switched on.
             /// TODO this flag is redundant with the tag of operand and can be removed.
             is_ref: bool,
+            /// If true, this switch has a labeled continue.
+            ///
+            /// This may mean the runtime value switched on may
+            /// come from a different place.
+            has_labeled_continue: bool,
             scalar_cases_len: ScalarCasesLen,
 
-            pub const ScalarCasesLen = u28;
+            pub const ScalarCasesLen = u27;
 
             pub fn specialProng(bits: Bits) SpecialProng {
                 const has_else: u2 = @boolToInt(bits.has_else);
