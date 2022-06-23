@@ -1773,7 +1773,7 @@ const Writer = struct {
             break :blk multi_cases_len;
         } else 0;
 
-        try self.writeInstRef(stream, extra.data.main_operand);
+        try self.writeInstRef(stream, extra.data.operand);
         try self.writeFlag(stream, ", ref", extra.data.bits.is_ref);
 
         self.indent += 2;
