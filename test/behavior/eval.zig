@@ -1191,14 +1191,14 @@ test "no dependency loop for alignment of self tagged union" {
 }
 
 test "equality of pointers to comptime const" {
-    if (builtin.zig_backend != .stage1) return error.SkipZigTest; // TODO
-
     const a: i32 = undefined;
     comptime assert(&a == &a);
 }
 
 test "storing an array of type in a field" {
-    if (builtin.zig_backend != .stage1) return error.SkipZigTest; // TODO
+    if (builtin.zig_backend == .stage2_x86_64) return error.SkipZigTest; // TODO
+    if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest; // TODO
+    if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
 
     const S = struct {
         fn doTheTest() void {
@@ -1222,4 +1222,50 @@ test "storing an array of type in a field" {
     };
 
     S.doTheTest();
+}
+
+test "pass pointer to field of comptime-only type as a runtime parameter" {
+    if (builtin.zig_backend == .stage2_x86_64) return error.SkipZigTest; // TODO
+    if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest; // TODO
+    if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
+
+    const S = struct {
+        const Mixed = struct {
+            T: type,
+            x: i32,
+        };
+        const bag: Mixed = .{
+            .T = bool,
+            .x = 1234,
+        };
+
+        var ok = false;
+
+        fn doTheTest() !void {
+            foo(&bag.x);
+            try expect(ok);
+        }
+
+        fn foo(ptr: *const i32) void {
+            ok = ptr.* == 1234;
+        }
+    };
+    try S.doTheTest();
+}
+
+test "comptime write through extern struct reinterpreted as array" {
+    comptime {
+        const S = extern struct {
+            a: u8,
+            b: u8,
+            c: u8,
+        };
+        var s: S = undefined;
+        @ptrCast(*[3]u8, &s)[0] = 1;
+        @ptrCast(*[3]u8, &s)[1] = 2;
+        @ptrCast(*[3]u8, &s)[2] = 3;
+        assert(s.a == 1);
+        assert(s.b == 2);
+        assert(s.c == 3);
+    }
 }

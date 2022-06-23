@@ -453,65 +453,6 @@ test "optional error set is the same size as error set" {
     comptime try expect(S.returnsOptErrSet() == null);
 }
 
-test "optional error set with only one error is the same size as bool" {
-    if (builtin.zig_backend == .stage1) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest; // TODO
-
-    const E = error{only};
-    comptime try expect(@sizeOf(?E) == @sizeOf(bool));
-    comptime try expect(@alignOf(?E) == @alignOf(bool));
-    const S = struct {
-        fn gimmeNull() ?E {
-            return null;
-        }
-        fn gimmeErr() ?E {
-            return error.only;
-        }
-    };
-    try expect(S.gimmeNull() == null);
-    try expect(error.only == S.gimmeErr().?);
-    comptime try expect(S.gimmeNull() == null);
-    comptime try expect(error.only == S.gimmeErr().?);
-}
-
-test "optional empty error set" {
-    if (builtin.zig_backend == .stage1) return error.SkipZigTest;
-
-    comptime try expect(@sizeOf(error{}!void) == @sizeOf(void));
-    comptime try expect(@alignOf(error{}!void) == @alignOf(void));
-
-    var x: ?error{} = undefined;
-    if (x != null) {
-        @compileError("test failed");
-    }
-}
-
-test "empty error set plus zero-bit payload" {
-    if (builtin.zig_backend == .stage1) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest; // TODO
-
-    comptime try expect(@sizeOf(error{}!void) == @sizeOf(void));
-    comptime try expect(@alignOf(error{}!void) == @alignOf(void));
-
-    var x: error{}!void = undefined;
-    if (x) |payload| {
-        if (payload != {}) {
-            @compileError("test failed");
-        }
-    } else |_| {
-        @compileError("test failed");
-    }
-    const S = struct {
-        fn empty() error{}!void {}
-        fn inferred() !void {
-            return empty();
-        }
-    };
-    try S.inferred();
-}
-
 test "nested catch" {
     if (builtin.zig_backend == .stage2_x86_64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
@@ -753,4 +694,46 @@ test "error union payload is properly aligned" {
     };
     const blk = S.foo() catch unreachable;
     if (blk.a != 1) unreachable;
+}
+
+test "ret_ptr doesn't cause own inferred error set to be resolved" {
+    if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest; // TODO
+
+    const S = struct {
+        fn foo() !void {}
+
+        fn doTheTest() !void {
+            errdefer @compileError("bad");
+
+            return try @This().foo();
+        }
+    };
+    try S.doTheTest();
+}
+
+test "simple else prong allowed even when all errors handled" {
+    if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest; // TODO
+    if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
+    if (builtin.zig_backend == .stage2_wasm) return error.SkipZigTest; // TODO
+
+    const S = struct {
+        fn foo() !u8 {
+            return error.Foo;
+        }
+    };
+    var value = S.foo() catch |err| switch (err) {
+        error.Foo => 255,
+        else => |e| return e,
+    };
+    try expect(value == 255);
+    value = S.foo() catch |err| switch (err) {
+        error.Foo => 255,
+        else => unreachable,
+    };
+    try expect(value == 255);
+    value = S.foo() catch |err| switch (err) {
+        error.Foo => 255,
+        else => return,
+    };
+    try expect(value == 255);
 }

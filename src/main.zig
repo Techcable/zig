@@ -433,9 +433,10 @@ const usage_build_generic =
     \\    defs                         Force a fatal error if any undefined symbols remain
     \\    origin                       Indicate that the object must have its origin processed
     \\    nocopyreloc                  Disable the creation of copy relocations
-    \\    noexecstack                  Indicate that the object requires an executable stack
-    \\    now                          Force all relocations to be processed on load
-    \\    relro                        Force all relocations to be resolved and be read-only on load
+    \\    now                          (default) Force all relocations to be processed on load
+    \\    lazy                         Don't force all relocations to be processed on load
+    \\    relro                        (default) Force all relocations to be read-only after processing
+    \\    norelro                      Don't force all relocations to be read-only after processing
     \\  -dynamic                       Force output to be dynamically linked
     \\  -static                        Force output to be statically linked
     \\  -Bsymbolic                     Bind global references locally
@@ -446,6 +447,7 @@ const usage_build_generic =
     \\  -F[dir]                        (Darwin) add search path for frameworks
     \\  -install_name=[value]          (Darwin) add dylib's install name
     \\  --entitlements [path]          (Darwin) add path to entitlements file for embedding in code signature
+    \\  -pagezero_size [value]         (Darwin) size of the __PAGEZERO segment in hexadecimal notation
     \\  --import-memory                (WebAssembly) import memory from the environment
     \\  --import-table                 (WebAssembly) import function table from the host environment
     \\  --export-table                 (WebAssembly) export function table to the host environment
@@ -654,9 +656,8 @@ fn buildOutputType(
     var linker_z_notext = false;
     var linker_z_defs = false;
     var linker_z_origin = false;
-    var linker_z_noexecstack = false;
-    var linker_z_now = false;
-    var linker_z_relro = false;
+    var linker_z_now = true;
+    var linker_z_relro = true;
     var linker_tsaware = false;
     var linker_nxcompat = false;
     var linker_dynamicbase = false;
@@ -694,6 +695,7 @@ fn buildOutputType(
     var install_name: ?[]const u8 = null;
     var hash_style: link.HashStyle = .both;
     var entitlements: ?[]const u8 = null;
+    var pagezero_size: ?u64 = null;
 
     // e.g. -m3dnow or -mno-outline-atomics. They correspond to std.Target llvm cpu feature names.
     // This array is populated by zig cc frontend and then has to be converted to zig-style
@@ -907,6 +909,13 @@ fn buildOutputType(
                     } else if (mem.eql(u8, arg, "-install_name")) {
                         install_name = args_iter.next() orelse {
                             fatal("expected parameter after {s}", .{arg});
+                        };
+                    } else if (mem.eql(u8, arg, "-pagezero_size")) {
+                        const next_arg = args_iter.next() orelse {
+                            fatal("expected parameter after {s}", .{arg});
+                        };
+                        pagezero_size = std.fmt.parseUnsigned(u64, eatIntPrefix(next_arg, 16), 16) catch |err| {
+                            fatal("unable to parse '{s}': {s}", .{ arg, @errorName(err) });
                         };
                     } else if (mem.eql(u8, arg, "-T") or mem.eql(u8, arg, "--script")) {
                         linker_script = args_iter.next() orelse {
@@ -1205,12 +1214,14 @@ fn buildOutputType(
                             linker_z_defs = true;
                         } else if (mem.eql(u8, z_arg, "origin")) {
                             linker_z_origin = true;
-                        } else if (mem.eql(u8, z_arg, "noexecstack")) {
-                            linker_z_noexecstack = true;
                         } else if (mem.eql(u8, z_arg, "now")) {
                             linker_z_now = true;
+                        } else if (mem.eql(u8, z_arg, "lazy")) {
+                            linker_z_now = false;
                         } else if (mem.eql(u8, z_arg, "relro")) {
                             linker_z_relro = true;
+                        } else if (mem.eql(u8, z_arg, "norelro")) {
+                            linker_z_relro = false;
                         } else {
                             warn("unsupported linker extension flag: -z {s}", .{z_arg});
                         }
@@ -1443,6 +1454,8 @@ fn buildOutputType(
                                 needed = false;
                             } else if (mem.eql(u8, linker_arg, "--no-as-needed")) {
                                 needed = true;
+                            } else if (mem.eql(u8, linker_arg, "-no-pie")) {
+                                want_pie = false;
                             } else if (mem.eql(u8, linker_arg, "--whole-archive") or
                                 mem.eql(u8, linker_arg, "-whole-archive"))
                             {
@@ -1643,6 +1656,15 @@ fn buildOutputType(
                     linker_optimization = std.fmt.parseUnsigned(u8, arg["-O".len..], 10) catch |err| {
                         fatal("unable to parse '{s}': {s}", .{ arg, @errorName(err) });
                     };
+                } else if (mem.eql(u8, arg, "-pagezero_size")) {
+                    i += 1;
+                    if (i >= linker_args.items.len) {
+                        fatal("expected linker arg after '{s}'", .{arg});
+                    }
+                    const next_arg = linker_args.items[i];
+                    pagezero_size = std.fmt.parseUnsigned(u64, eatIntPrefix(next_arg, 16), 16) catch |err| {
+                        fatal("unable to parse '{s}': {s}", .{ arg, @errorName(err) });
+                    };
                 } else if (mem.eql(u8, arg, "--gc-sections")) {
                     linker_gc_sections = true;
                 } else if (mem.eql(u8, arg, "--no-gc-sections")) {
@@ -1688,11 +1710,15 @@ fn buildOutputType(
                     } else if (mem.eql(u8, z_arg, "origin")) {
                         linker_z_origin = true;
                     } else if (mem.eql(u8, z_arg, "noexecstack")) {
-                        linker_z_noexecstack = true;
+                        // noexecstack is the default when linking with LLD
                     } else if (mem.eql(u8, z_arg, "now")) {
                         linker_z_now = true;
+                    } else if (mem.eql(u8, z_arg, "lazy")) {
+                        linker_z_now = false;
                     } else if (mem.eql(u8, z_arg, "relro")) {
                         linker_z_relro = true;
+                    } else if (mem.eql(u8, z_arg, "norelro")) {
+                        linker_z_relro = false;
                     } else {
                         warn("unsupported linker extension flag: -z {s}", .{z_arg});
                     }
@@ -2709,7 +2735,6 @@ fn buildOutputType(
         .linker_z_notext = linker_z_notext,
         .linker_z_defs = linker_z_defs,
         .linker_z_origin = linker_z_origin,
-        .linker_z_noexecstack = linker_z_noexecstack,
         .linker_z_now = linker_z_now,
         .linker_z_relro = linker_z_relro,
         .linker_tsaware = linker_tsaware,
@@ -2756,6 +2781,7 @@ fn buildOutputType(
         .native_darwin_sdk = native_darwin_sdk,
         .install_name = install_name,
         .entitlements = entitlements,
+        .pagezero_size = pagezero_size,
     }) catch |err| switch (err) {
         error.LibCUnavailable => {
             const target = target_info.target;
@@ -5039,6 +5065,18 @@ pub fn cmdChangelist(
         }
     }
     try bw.flush();
+}
+
+fn eatIntPrefix(arg: []const u8, radix: u8) []const u8 {
+    if (arg.len > 2 and arg[0] == '0') {
+        switch (std.ascii.toLower(arg[1])) {
+            'b' => if (radix == 2) return arg[2..],
+            'o' => if (radix == 8) return arg[2..],
+            'x' => if (radix == 16) return arg[2..],
+            else => {},
+        }
+    }
+    return arg;
 }
 
 fn parseIntSuffix(arg: []const u8, prefix_len: usize) u64 {

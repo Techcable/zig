@@ -319,6 +319,23 @@ pub const Inst = struct {
         /// only the taken branch is analyzed. The then block and else block must
         /// terminate with an "inline" variant of a noreturn instruction.
         condbr_inline,
+        /// Given an operand which is an error union, splits control flow. In
+        /// case of error, control flow goes into the block that is part of this
+        /// instruction, which is guaranteed to end with a return instruction
+        /// and never breaks out of the block.
+        /// In the case of non-error, control flow proceeds to the next instruction
+        /// after the `try`, with the result of this instruction being the unwrapped
+        /// payload value, as if `err_union_payload_unsafe` was executed on the operand.
+        /// Uses the `pl_node` union field. Payload is `Try`.
+        @"try",
+        ///// Same as `try` except the operand is coerced to a comptime value, and
+        ///// only the taken branch is analyzed. The block must terminate with an "inline"
+        ///// variant of a noreturn instruction.
+        //try_inline,
+        /// Same as `try` except the operand is a pointer and the result is a pointer.
+        try_ptr,
+        ///// Same as `try_inline` except the operand is a pointer and the result is a pointer.
+        //try_ptr_inline,
         /// An error set type definition. Contains a list of field names.
         /// Uses the `pl_node` union field. Payload is `ErrorSetDecl`.
         error_set_decl,
@@ -1231,6 +1248,10 @@ pub const Inst = struct {
                 .closure_capture,
                 .ret_ptr,
                 .ret_type,
+                .@"try",
+                .try_ptr,
+                //.try_inline,
+                //.try_ptr_inline,
                 => false,
 
                 .@"break",
@@ -1247,6 +1268,18 @@ pub const Inst = struct {
                 .repeat_inline,
                 .panic,
                 => true,
+            };
+        }
+
+        pub fn isParam(tag: Tag) bool {
+            return switch (tag) {
+                .param,
+                .param_comptime,
+                .param_anytype,
+                .param_anytype_comptime,
+                => true,
+
+                else => false,
             };
         }
 
@@ -1509,6 +1542,10 @@ pub const Inst = struct {
                 .repeat,
                 .repeat_inline,
                 .panic,
+                .@"try",
+                .try_ptr,
+                //.try_inline,
+                //.try_ptr_inline,
                 => false,
 
                 .extended => switch (data.extended.opcode) {
@@ -1569,6 +1606,10 @@ pub const Inst = struct {
                 .coerce_result_ptr = .bin,
                 .condbr = .pl_node,
                 .condbr_inline = .pl_node,
+                .@"try" = .pl_node,
+                .try_ptr = .pl_node,
+                //.try_inline = .pl_node,
+                //.try_ptr_inline = .pl_node,
                 .error_set_decl = .pl_node,
                 .error_set_decl_anon = .pl_node,
                 .error_set_decl_func = .pl_node,
@@ -1961,6 +2002,7 @@ pub const Inst = struct {
         i8_type,
         u16_type,
         i16_type,
+        u29_type,
         u32_type,
         i32_type,
         u64_type,
@@ -2071,6 +2113,10 @@ pub const Inst = struct {
             .i16_type = .{
                 .ty = Type.initTag(.type),
                 .val = Value.initTag(.i16_type),
+            },
+            .u29_type = .{
+                .ty = Type.initTag(.type),
+                .val = Value.initTag(.u29_type),
             },
             .u32_type = .{
                 .ty = Type.initTag(.type),
@@ -2381,7 +2427,7 @@ pub const Inst = struct {
             operand: Ref,
 
             pub fn src(self: @This()) LazySrcLoc {
-                return .{ .node_offset = self.src_node };
+                return LazySrcLoc.nodeOffset(self.src_node);
             }
         },
         /// Used for unary operators, with a token source location.
@@ -2404,7 +2450,7 @@ pub const Inst = struct {
             payload_index: u32,
 
             pub fn src(self: @This()) LazySrcLoc {
-                return .{ .node_offset = self.src_node };
+                return LazySrcLoc.nodeOffset(self.src_node);
             }
         },
         pl_tok: struct {
@@ -2480,7 +2526,7 @@ pub const Inst = struct {
             bit_count: u16,
 
             pub fn src(self: @This()) LazySrcLoc {
-                return .{ .node_offset = self.src_node };
+                return LazySrcLoc.nodeOffset(self.src_node);
             }
         },
         bool_br: struct {
@@ -2499,7 +2545,7 @@ pub const Inst = struct {
             force_comptime: bool,
 
             pub fn src(self: @This()) LazySrcLoc {
-                return .{ .node_offset = self.src_node };
+                return LazySrcLoc.nodeOffset(self.src_node);
             }
         },
         @"break": struct {
@@ -2520,7 +2566,7 @@ pub const Inst = struct {
             inst: Index,
 
             pub fn src(self: @This()) LazySrcLoc {
-                return .{ .node_offset = self.src_node };
+                return LazySrcLoc.nodeOffset(self.src_node);
             }
         },
         str_op: struct {
@@ -2801,6 +2847,14 @@ pub const Inst = struct {
         condition: Ref,
         then_body_len: u32,
         else_body_len: u32,
+    };
+
+    /// This data is stored inside extra, trailed by:
+    /// * 0. body: Index //  for each `body_len`.
+    pub const Try = struct {
+        /// The error union to unwrap.
+        operand: Ref,
+        body_len: u32,
     };
 
     /// Stored in extra. Depending on the flags in Data, there will be up to 5
@@ -3113,6 +3167,8 @@ pub const Inst = struct {
         /// Create an anonymous name for this declaration.
         /// Like this: "ParentDeclName_struct_69"
         anon,
+        /// Use the name specified in the next `dbg_var_{val,ptr}` instruction.
+        dbg_var,
     };
 
     /// Trailing:
@@ -3749,6 +3805,12 @@ fn findDeclsInner(
             const else_body = zir.extra[extra.end + then_body.len ..][0..extra.data.else_body_len];
             try zir.findDeclsBody(list, then_body);
             try zir.findDeclsBody(list, else_body);
+        },
+        .@"try", .try_ptr => {
+            const inst_data = datas[inst].pl_node;
+            const extra = zir.extraData(Inst.Try, inst_data.payload_index);
+            const body = zir.extra[extra.end..][0..extra.data.body_len];
+            try zir.findDeclsBody(list, body);
         },
         .switch_block => return findDeclsSwitch(zir, list, inst),
 

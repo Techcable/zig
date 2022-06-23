@@ -113,7 +113,6 @@ pub const Options = struct {
     z_defs: bool,
     z_origin: bool,
     z_nocopyreloc: bool,
-    z_noexecstack: bool,
     z_now: bool,
     z_relro: bool,
     tsaware: bool,
@@ -187,6 +186,9 @@ pub const Options = struct {
 
     /// (Darwin) Path to entitlements file
     entitlements: ?[]const u8 = null,
+
+    /// (Darwin) size of the __PAGEZERO segment
+    pagezero_size: ?u64 = null,
 
     pub fn effectiveOutputMode(options: Options) std.builtin.OutputMode {
         return if (options.use_lld) .Obj else options.output_mode;
@@ -793,14 +795,10 @@ pub const File = struct {
                     }),
                 }
             }
-            if (base.options.object_format == .macho) {
-                try base.cast(MachO).?.flushObject(comp, prog_node);
-            } else {
-                try base.flushModule(comp, prog_node);
-            }
-            break :blk try fs.path.join(arena, &.{
-                fs.path.dirname(full_out_path_z).?, base.intermediary_basename.?,
-            });
+            try base.flushModule(comp, prog_node);
+
+            const dirname = fs.path.dirname(full_out_path_z) orelse ".";
+            break :blk try fs.path.join(arena, &.{ dirname, base.intermediary_basename.? });
         } else null;
 
         log.debug("module_obj_path={s}", .{if (module_obj_path) |s| s else "(null)"});
