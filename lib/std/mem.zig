@@ -16,7 +16,11 @@ pub const page_size = switch (builtin.cpu.arch) {
     .wasm32, .wasm64 => 64 * 1024,
     .aarch64 => switch (builtin.os.tag) {
         .macos, .ios, .watchos, .tvos => 16 * 1024,
-        else => 4 * 1024,
+        // PATCH: Use 16k pages as default for AArch64 Linux
+        //
+        // Fixes Asahi Linux using 16k pages
+        .linux => 16 * 1024,
+        else => 8 * 1024,
     },
     .sparc64 => 8 * 1024,
     else => 4 * 1024,
